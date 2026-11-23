@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Q-Volta</title>
+<meta name="description" content="From-scratch C++20/CUDA inference engine for Qwen3.8-27B and Inkling-2-Mini on one Tesla V100 and on CPUs.">
+<link rel="icon" href="img/Q_Logo.svg" type="image/svg+xml">
+<style>
+:root{--bg:#f7f8fc;--fg:#0f172a;--mut:#475569;--card:#fff;--line:#e2e8f0;--a:#6d4aff;--b:#0891b2;--code:#0f172a;--codefg:#e2e8f0}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0b1020;--fg:#e2e8f0;--mut:#94a3b8;--card:#131a33;--line:#25305a;--a:#9b84ff;--b:#22d3ee}}
+:root[data-theme=dark]{--bg:#0b1020;--fg:#e2e8f0;--mut:#94a3b8;--card:#131a33;--line:#25305a;--a:#9b84ff;--b:#22d3ee}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+a{color:var(--a)}
+.wrap{max-width:1040px;margin:0 auto;padding:0 16px}
+nav{position:sticky;top:0;z-index:5;backdrop-filter:blur(10px);background:color-mix(in srgb,var(--bg) 82%,transparent);border-bottom:1px solid var(--line)}
+nav .wrap{display:flex;gap:18px;align-items:center;height:56px;overflow-x:auto;white-space:nowrap}
+nav a{color:var(--mut);text-decoration:none;font-size:14px}nav a:hover{color:var(--fg)}
+nav .logo{display:flex;gap:8px;align-items:center;color:var(--fg);font-weight:700;margin-right:auto}
+nav img{width:26px;height:26px}
+.hero{padding:56px 0 24px;text-align:center}
+.hero img.b{width:100%;max-width:960px;border-radius:20px;box-shadow:0 20px 60px rgba(80,60,200,.25)}
+.hero h1{font-size:clamp(28px,5vw,44px);line-height:1.15;margin:28px 0 8px}
+.hero p{color:var(--mut);max-width:720px;margin:0 auto 22px}
+.btns{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.btn{padding:10px 18px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--fg);text-decoration:none;font-weight:600;font-size:15px}
+.btn.p{background:linear-gradient(90deg,#7c5cff,#22d3ee);border:0;color:#fff}
+.note{background:var(--card);border:1px solid var(--line);border-left:4px solid #f59e0b;border-radius:10px;padding:12px 16px;margin:28px 0;color:var(--mut);font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin:18px 0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px}
+.card .n{font-size:30px;font-weight:800;background:linear-gradient(90deg,#7c5cff,#22d3ee);-webkit-background-clip:text;background-clip:text;color:transparent;line-height:1.2}
+.card .l{color:var(--mut);font-size:14px}
+h2{font-size:26px;margin:52px 0 6px}h3{margin:28px 0 6px;font-size:18px}
+.sub{color:var(--mut);margin:0 0 16px}
+.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--card)}
+table{border-collapse:collapse;width:100%;font-size:14.5px}
+th,td{padding:9px 12px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}tr:last-child td{border-bottom:0}
+th{color:var(--mut);font-weight:600;font-size:13px}
+tr.q td:first-child{font-weight:700}tr.q{background:color-mix(in srgb,var(--a) 8%,transparent)}
+.charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+.charts figure{margin:0;background:#fff;border:1px solid var(--line);border-radius:14px;padding:8px}
+.charts img{width:100%;display:block}
+pre{background:var(--code);color:var(--codefg);padding:16px;border-radius:12px;overflow-x:auto;font-size:13.5px;line-height:1.55}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+ul.f{padding-left:18px;margin:6px 0}ul.f li{margin:5px 0}
+footer{border-top:1px solid var(--line);margin-top:64px;padding:28px 0;color:var(--mut);font-size:14px;text-align:center}
+</style>
+</head>
+<body>
+<nav><div class="wrap">
+  <a class="logo" href="#top"><img src="img/Q_Logo.svg" alt=""> Q-Volta</a>
+  <a href="#results">Results</a><a href="#compare">vs llama.cpp</a><a href="#start">Quick start</a><a href="#models">Models</a><a href="#caveats">Caveats</a>
+  <a href="https://github.com/Q-Project-LM/q-volta">GitHub</a>
+</div></nav>
+
+<main class="wrap" id="top">
+<section class="hero">
+  <img class="b" src="img/banner.svg" alt="Q-Volta banner">
+  <h1>Fast LLM inference on one Tesla V100 and on plain CPUs</h1>
+  <p>An original C++20 / CUDA engine for Qwen3.8-27B and Inkling-2-Mini: single-file quantized models, exact MTP speculative decoding, 256K context on a 16&nbsp;GB card and an OpenAI / llama-server compatible API.</p>
+  <div class="btns">
+    <a class="btn p" href="#start">Quick start</a>
+    <a class="btn" href="https://github.com/Q-Project-LM/q-volta">GitHub</a>
+    <a class="btn" href="https://huggingface.co/q-project/Qwen3.8-27B-QVolta">Qwen weights</a>
+    <a class="btn" href="https://huggingface.co/q-project/Inkling-2-Mini-QVolta">Inkling weights</a>
+  </div>
+</section>
+
+<div class="note"><b>Research code, not a release.</b> Every number on this page was measured on one machine (Tesla V100-SXM2-16GB; Xeon E5-2683 v4) with raw data in the repository. We do not claim to be "the best": at equal file size we are faster, but llama.cpp's quantizations are better in quality &mdash; see <a href="#compare">the comparison</a>.</div>
+
+<div class="grid">
+  <div class="card"><div class="n">58 &rarr; 136</div><div class="l">tok/s on a V100 for Qwen3.8-27B (e1 file, code prompt): plain &rarr; exact MTP</div></div>
+  <div class="card"><div class="n">10.4 GiB</div><div class="l">whole model in one <code>.qv</code> file (12.6 GiB for the higher-quality e0)</div></div>
+  <div class="card"><div class="n">256K</div><div class="l">context fits on a 16&nbsp;GB card (10.4 GiB weights + int4 KV cache)</div></div>
+  <div class="card"><div class="n">3.8&ndash;4.5</div><div class="l">tok/s for the 27B on one old 32-thread Xeon with exact MTP (1.4&ndash;1.6&times; plain)</div></div>
+</div>
+
+<h2 id="results">Results</h2>
+<p class="sub">Tesla V100-SXM2-16GB, greedy decode. MTP = best depth 1&ndash;3; its output is bit-identical to plain greedy decoding.</p>
+<div class="charts">
+  <figure><img src="img/gpu_decode.svg" alt="GPU decode"></figure>
+  <figure><img src="img/gpu_prefill.svg" alt="GPU prefill"></figure>
+  <figure><img src="img/cpu_decode.svg" alt="CPU decode"></figure>
+  <figure><img src="img/cpu_prefill.svg" alt="CPU prefill"></figure>
+</div>
+
+<h2 id="compare">Comparison with llama.cpp on the same V100</h2>
+<p class="sub">llama.cpp 9d6f04f (CUDA, sm_70), same prompts, 3 interleaved rounds, quality against one common reference (llama.cpp Q8_0, a near-lossless proxy, not BF16). Measured 2026-11-21..23. Protocol and raw data: <a href="https://github.com/Q-Project-LM/q-volta/tree/main/benchmarks/compare">benchmarks/compare</a>.</p>
+<div class="tbl"><table>
+<tr><th></th><th>file GiB</th><th>ppl (BF16 8.468)</th><th>KL to Q8_0</th><th>decode tok/s</th><th>with MTP</th><th>prefill 2048</th><th>max ctx</th></tr>
+<tr><td>llama.cpp Q3_K_M</td><td>12.77</td><td>8.905</td><td>0.054</td><td>42.3</td><td>74.8</td><td>931</td><td>132K (q4_0)</td></tr>
+<tr class="q"><td>Q-Volta e0</td><td>12.63</td><td>9.511</td><td>0.102</td><td>52.2</td><td>131.7</td><td>1250</td><td>140K (int4)</td></tr>
+<tr><td>llama.cpp IQ3_XXS + imatrix</td><td>10.89</td><td>8.992</td><td>0.075</td><td>38.7</td><td>68.8</td><td>779</td><td>219K (q4_0)</td></tr>
+<tr class="q"><td>Q-Volta e1</td><td>10.44</td><td>9.278</td><td>0.092</td><td>57.6</td><td>135.9</td><td>1250</td><td>267K (int4)</td></tr>
+</table></div>
+<p class="sub" style="margin-top:12px"><b>Reading:</b> at about equal bytes Q-Volta decodes and prefills faster and fits a longer int4 KV cache; llama.cpp's quants are clearly better in quality. Improving our quantization is the current research item. Max context is an allocation probe, not a quality claim.</p>
+
+<h2 id="start">Quick start</h2>
+<pre>cmake -S . -B build -G Ninja -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc &amp;&amp; ninja -C build
+
+hf download q-project/Qwen3.8-27B-QVolta qwen38-27b-e1.qv tokenizer.json --local-dir models
+
+./build/qv_server --model models/qwen38-27b-e1.qv --tokenizer models/tokenizer.json \
+    --backend cuda --kv int4 --max-ctx 131072 --mtp --mtp-depth 2
+
+curl localhost:8080/v1/chat/completions -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"Hello"}],"max_tokens":64}'</pre>
+<p class="sub">CPU-only build: add <code>-DQV_CUDA=OFF</code> and use <code>--backend cpu</code>. A Dockerfile (GPU and CPU targets) is provided; it has not been built by the authors yet.</p>
+
+<h2 id="models">Models</h2>
+<div class="cols">
+  <div class="card"><h3 style="margin-top:0"><a href="https://huggingface.co/q-project/Qwen3.8-27B-QVolta">Qwen3.8-27B-QVolta</a></h3>
+  <ul class="f"><li><code>e1</code> 10.44 GiB, ppl +9.6%</li><li><code>e0</code> 12.63 GiB, ppl +12.3%</li><li>native MTP head, 256K context, pi-adapter supported as a merged model</li></ul></div>
+  <div class="card"><h3 style="margin-top:0"><a href="https://huggingface.co/q-project/Inkling-2-Mini-QVolta">Inkling-2-Mini-QVolta</a></h3>
+  <ul class="f"><li>9.89 GiB (26B MoE, 3.4B active, looped layers)</li><li>~120 tok/s decode on the V100 through the server</li><li>text only; no MTP / vision yet</li></ul></div>
+</div>
+
+<h2 id="features">What is inside</h2>
+<div class="cols">
+  <div class="card"><b>Engine</b><ul class="f"><li>int8 dp4a GEMV decode at 81&ndash;99% of HBM peak, CUDA graphs</li><li>tensor-core flash prefill</li><li>exact multi-token verify for MTP</li><li>AVX2 CPU backend with huge-page weights</li></ul></div>
+  <div class="card"><b>Format &amp; quantization</b><ul class="f"><li>single-file <code>.qv</code> container</li><li>2&ndash;8 bit bit-planes, GPTQ-style calibration</li><li>int4 KV cache (KIVI-style)</li></ul></div>
+  <div class="card"><b>Server</b><ul class="f"><li>llama-server flags and endpoints</li><li>OpenAI chat / completions, tools, grammars</li><li>jinja chat templates</li></ul></div>
+</div>
+
+<h2 id="caveats">Honest caveats</h2>
+<ul class="f">
+  <li>Quality at equal size is behind llama.cpp's K-/I-quants (table above); e1 is also weaker than e0 on our agentic check.</li>
+  <li>The CPU comparison is not load-matched (shared host, single runs); the plain-vs-MTP ratios are the reliable part.</li>
+  <li>One decoding sequence at a time; requests queue. No continuous batching.</li>
+  <li>Inkling: engine matches the Hugging Face implementation at bf16-noise level on 4 prompts; whole-model long-context (&gt;8K) parity is untested.</li>
+  <li>ExLlamaV2/V3, vLLM and SGLang were not run on this V100 (reasons in the comparison README).</li>
+</ul>
+<p>Details: <a href="https://github.com/Q-Project-LM/q-volta/blob/main/docs/PERFORMANCE.md">PERFORMANCE.md</a> &middot; <a href="https://github.com/Q-Project-LM/q-volta/blob/main/docs/QUANTIZATION.md">QUANTIZATION.md</a> &middot; <a href="https://github.com/Q-Project-LM/q-volta/blob/main/docs/PROGRESS.md">PROGRESS.md</a></p>
+</main>
+<footer><div class="wrap">Q-Volta by the Q Project &middot; research code, no licence chosen yet &middot; <a href="https://github.com/Q-Project-LM/q-volta">github.com/Q-Project-LM/q-volta</a></div></footer>
+</body>
+</html>

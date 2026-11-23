@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="340" viewBox="0 0 1280 340" role="img" aria-label="Q-Volta: fast LLM inference on one Tesla V100 and on CPUs">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0b1020"/><stop offset="0.55" stop-color="#16103a"/><stop offset="1" stop-color="#0d2a3a"/></linearGradient>
+    <linearGradient id="ac" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#7c5cff"/><stop offset="1" stop-color="#22d3ee"/></linearGradient>
+    <radialGradient id="glow" cx="0.82" cy="0.2" r="0.6"><stop offset="0" stop-color="#7c5cff" stop-opacity="0.35"/><stop offset="1" stop-color="#7c5cff" stop-opacity="0"/></radialGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0V32" fill="none" stroke="#ffffff" stroke-opacity="0.05"/></pattern>
+  </defs>
+  <rect width="1280" height="340" rx="20" fill="url(#bg)"/>
+  <rect width="1280" height="340" rx="20" fill="url(#grid)"/>
+  <rect width="1280" height="340" rx="20" fill="url(#glow)"/>
+  <g font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif">
+    <text x="64" y="132" font-size="84" font-weight="800" fill="#fff" letter-spacing="-2">Q-Volta</text>
+    <rect x="66" y="150" width="190" height="6" rx="3" fill="url(#ac)"/>
+    <text x="64" y="204" font-size="26" fill="#cbd5e1">From-scratch C++20 / CUDA inference engine</text>
+    <text x="64" y="238" font-size="26" fill="#cbd5e1">for Qwen3.8-27B and Inkling-2-Mini</text>
+    <text x="64" y="288" font-size="19" fill="#94a3b8">Tesla V100 (sm_70)  ·  x86 CPU  ·  exact MTP  ·  256K context  ·  llama-server compatible</text>
+    <g transform="translate(860,70)">
+      <rect width="360" height="200" rx="16" fill="#ffffff" fill-opacity="0.06" stroke="#ffffff" stroke-opacity="0.14"/>
+      <text x="24" y="40" font-size="15" fill="#94a3b8" letter-spacing="1.5">QWEN3.8-27B ON ONE V100-16GB</text>
+      <text x="24" y="98" font-size="52" font-weight="800" fill="url(#ac)">58 → 136</text>
+      <text x="236" y="98" font-size="20" fill="#cbd5e1">tok/s</text>
+      <text x="24" y="128" font-size="16" fill="#94a3b8">plain → exact MTP (e1 file, code prompt)</text>
+      <line x1="24" x2="336" y1="150" y2="150" stroke="#ffffff" stroke-opacity="0.12"/>
+      <text x="24" y="180" font-size="17" fill="#e2e8f0">10.4 GiB file   ·   256K ctx   ·   int4 KV</text>
+    </g>
+  </g>
+</svg>
