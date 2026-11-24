@@ -78,6 +78,7 @@ int main(int argc, char** argv) {
         auto eng = qv::make_cpu_engine(mf, opt);
         auto* info = dynamic_cast<qv::InklingCpuInfo*>(eng.get());
         std::fprintf(stderr, "loaded in %.1f s, decode bytes/token %.3f GB\n", now() - t0, info->decode_bytes_per_token() / 1e9);
+        std::fprintf(stderr, "state %.2f MiB at max_ctx %d = %.2f KiB/token\n", eng->device_bytes_state() / 1048576.0, opt.max_ctx, eng->device_bytes_state() / 1024.0 / opt.max_ctx);
         {
             std::ifstream sm("/proc/self/smaps_rollup");
             for (std::string l; std::getline(sm, l);) if (l.rfind("AnonHugePages", 0) == 0 || l.rfind("Rss", 0) == 0) std::fprintf(stderr, "%s\n", l.c_str());

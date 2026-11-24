@@ -251,6 +251,19 @@ void ink_attn_partial(const InkAttnArgs& a, float* acc, float* ml) {
     constexpr int D = 128, BK = 64;
     float m[3] = {-INFINITY, -INFINITY, -INFINITY}, l[3] = {0, 0, 0};
     std::memset(acc, 0, 3 * D * sizeof(float));
+#ifdef __aarch64__
+    // int8 KV: quantize the 3 query heads once (symmetric, per head) so the K dot products run on sdot
+    alignas(16) int8_t qq[3][D];
+    float qsc[3] = {0, 0, 0};
+    if (a.kq)
+        for (int h = 0; h < 3; ++h) {
+            float mx = 0.f;
+            for (int d = 0; d < D; ++d) mx = std::max(mx, std::fabs(a.q[h * D + d]));
+            qsc[h] = mx > 0.f ? mx / 127.f : 1.f;
+            const float inv = 1.f / qsc[h];
+            for (int d = 0; d < D; ++d) qq[h][d] = (int8_t)std::nearbyint(a.q[h * D + d] * inv);
+        }
+#endif
     alignas(32) float s[3][BK], rl[3][BK + 8];
     for (int jb = a.j0; jb < a.j1; jb += BK) {
         const int nk = std::min(BK, a.j1 - jb);
@@ -288,6 +301,25 @@ void ink_attn_partial(const InkAttnArgs& a, float* acc, float* ml) {
         float bm[3] = {-INFINITY, -INFINITY, -INFINITY};
         for (int jj = 0; jj < nk; ++jj) {
             const int j = jb + jj;
+            const int di = a.p - j - dmin;  // index into rl
+#ifdef __aarch64__
+            if (a.kq) {
+                const int8_t* kr = a.kq + (size_t)j * D;
+                int32x4_t c0 = vdupq_n_s32(0), c1 = c0, c2 = c0;
+                for (int d = 0; d < D; d += 16) {
+                    const int8x16_t kv = vld1q_s8(kr + d);
+                    c0 = vdotq_s32(c0, kv, vld1q_s8(qq[0] + d));
+                    c1 = vdotq_s32(c1, kv, vld1q_s8(qq[1] + d));
+                    c2 = vdotq_s32(c2, kv, vld1q_s8(qq[2] + d));
+                }
+                const float ksc = a.ks[j] * a.scale;
+                s[0][jj] = (float)vaddvq_s32(c0) * ksc * qsc[0] + rl[0][di];
+                s[1][jj] = (float)vaddvq_s32(c1) * ksc * qsc[1] + rl[1][di];
+                s[2][jj] = (float)vaddvq_s32(c2) * ksc * qsc[2] + rl[2][di];
+                for (int h = 0; h < 3; ++h) bm[h] = std::max(bm[h], s[h][jj]);
+                continue;
+            }
+#endif
             __m256 s0 = _mm256_setzero_ps(), s1 = _mm256_setzero_ps(), s2 = _mm256_setzero_ps();
             alignas(32) float kf[D];
             const uint16_t* k = nullptr;
@@ -299,7 +331,6 @@ void ink_attn_partial(const InkAttnArgs& a, float* acc, float* ml) {
                 s1 = _mm256_fmadd_ps(kv, _mm256_loadu_ps(a.q + D + d), s1);
                 s2 = _mm256_fmadd_ps(kv, _mm256_loadu_ps(a.q + 2 * D + d), s2);
             }
-            const int di = a.p - j - dmin;  // index into rl
             s[0][jj] = hsum(s0) * a.scale + rl[0][di];
             s[1][jj] = hsum(s1) * a.scale + rl[1][di];
             s[2][jj] = hsum(s2) * a.scale + rl[2][di];
@@ -323,6 +354,26 @@ void ink_attn_partial(const InkAttnArgs& a, float* acc, float* ml) {
         }
         for (int jj = 0; jj < nk; ++jj) {
             const int j = jb + jj;
+#ifdef __aarch64__
+            if (a.vq) {
+                const int8_t* vr = a.vq + (size_t)j * D;
+                const float vsc = a.vs[j];
+                const float32x4_t p0 = vdupq_n_f32(s[0][jj] * vsc), p1 = vdupq_n_f32(s[1][jj] * vsc), p2 = vdupq_n_f32(s[2][jj] * vsc);
+                for (int d = 0; d < D; d += 16) {
+                    const int8x16_t v8 = vld1q_s8(vr + d);
+                    const int16x8_t lo = vmovl_s8(vget_low_s8(v8)), hi = vmovl_s8(vget_high_s8(v8));
+                    const float32x4_t f[4] = {vcvtq_f32_s32(vmovl_s16(vget_low_s16(lo))), vcvtq_f32_s32(vmovl_s16(vget_high_s16(lo))),
+                                              vcvtq_f32_s32(vmovl_s16(vget_low_s16(hi))), vcvtq_f32_s32(vmovl_s16(vget_high_s16(hi)))};
+                    for (int u = 0; u < 4; ++u) {
+                        float* a0 = acc + d + 4 * u;
+                        vst1q_f32(a0, vfmaq_f32(vld1q_f32(a0), p0, f[u]));
+                        vst1q_f32(a0 + D, vfmaq_f32(vld1q_f32(a0 + D), p1, f[u]));
+                        vst1q_f32(a0 + 2 * D, vfmaq_f32(vld1q_f32(a0 + 2 * D), p2, f[u]));
+                    }
+                }
+                continue;
+            }
+#endif
             alignas(32) float vf[D];
             const uint16_t* v = nullptr;
             if (a.vq) { const int8_t* vr = a.vq + (size_t)j * D; const float sc = a.vs[j]; for (int d = 0; d < D; ++d) vf[d] = (float)vr[d] * sc; }
