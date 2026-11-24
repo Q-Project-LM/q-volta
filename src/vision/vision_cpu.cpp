@@ -1,6 +1,6 @@
 // CPU Inkling vision encoder: fp32 activations, fp16-stored weights packed into 16-column panels, AVX2/FMA micro-kernel (6x16),
 // OpenMP over output tiles. Exact same math as the HF module (docs/INKLING_VISION.md section 4-6).
-#include <immintrin.h>
+#include "backends/cpu/cpu_relax.h"
 #include <omp.h>
 
 #include <algorithm>

@@ -274,6 +274,7 @@ void App::parse_sampling(const Value& bv, Task& t) {
         s.samplers = keep;
     }
     t.ignore_eos = b.boolean("ignore_eos", o.ignore_eos);
+    t.special = b.boolean("special", o.special);  // per-request: keep special tokens (e.g. <|end_message|>) in the text so stop strings can match them
     s.logit_bias = o.logit_bias;
     if (const Value* v = b.g("logit_bias")) {
         auto add = [&](const Value& key, const Value& val) {
@@ -678,7 +679,7 @@ GenResult App::generate(Task& t, const std::function<bool()>& alive, const std::
                 if (is_eos) { r.stop_type = "eos"; r.tokens_cached = (int)cached_.size(); break; }
                 sampler.accept(tk);
                 std::string piece = dec.push(tk);
-                if (!o.special && t.tool_fmt != ToolFormat::Inkling && tok.is_added(tk)) { std::string b = tok.token_bytes(tk); if (b.size() > 4 && b.rfind("<|", 0) == 0 && b.compare(b.size() - 2, 2, "|>") == 0) piece.clear(); }
+                if (!t.special && t.tool_fmt != ToolFormat::Inkling && tok.is_added(tk)) { std::string b = tok.token_bytes(tk); if (b.size() > 4 && b.rfind("<|", 0) == 0 && b.compare(b.size() - 2, 2, "|>") == 0) piece.clear(); }
                 pending += piece;
                 // stop strings
                 size_t hit = std::string::npos;

@@ -1,6 +1,6 @@
 #include "ink_ops.h"
 
-#include <immintrin.h>
+#include "cpu_relax.h"
 
 #include <algorithm>
 #include <cfloat>
@@ -208,8 +208,12 @@ void expert_act_interleaved(const float* gu, float* act, int n_pairs, float gcap
     int i = 0;
     for (; i + 8 <= n_pairs; i += 8) {
         const __m256 a = _mm256_loadu_ps(gu + 2 * i), b = _mm256_loadu_ps(gu + 2 * i + 8);
+#ifdef __aarch64__
+        const __m256 ge{vuzp1q_f32(a.lo, a.hi), vuzp1q_f32(b.lo, b.hi)}, ue{vuzp2q_f32(a.lo, a.hi), vuzp2q_f32(b.lo, b.hi)};
+#else
         const __m256 ge = _mm256_castpd_ps(_mm256_permute4x64_pd(_mm256_castps_pd(_mm256_shuffle_ps(a, b, 0x88)), 0xD8));
         const __m256 ue = _mm256_castpd_ps(_mm256_permute4x64_pd(_mm256_castps_pd(_mm256_shuffle_ps(a, b, 0xDD)), 0xD8));
+#endif
         const __m256 gcap_v = _mm256_mul_ps(gc, tanh256(_mm256_mul_ps(ge, gci)));
         const __m256 sig = _mm256_div_ps(one, _mm256_add_ps(one, exp256(_mm256_sub_ps(zero, ge))));
         const __m256 ucap_v = _mm256_mul_ps(uc, tanh256(_mm256_mul_ps(ue, uci)));
@@ -233,6 +237,14 @@ void store_f16(const float* x, uint16_t* out, int n) {
     for (; i + 8 <= n; i += 8)
         _mm_storeu_si128((__m128i*)(out + i), _mm256_cvtps_ph(_mm256_loadu_ps(x + i), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC));
     for (; i < n; ++i) out[i] = _cvtss_sh(x[i], 0);
+}
+
+void store_q8(const float* x, int8_t* out, float* scale) {
+    float mx = 0.f;
+    for (int i = 0; i < 128; ++i) mx = std::max(mx, std::fabs(x[i]));
+    const float sc = mx > 0.f ? mx / 127.f : 1.f, inv = 1.f / sc;
+    for (int i = 0; i < 128; ++i) out[i] = (int8_t)std::max(-127.f, std::min(127.f, std::nearbyint(x[i] * inv)));
+    *scale = sc;
 }
 
 void ink_attn_partial(const InkAttnArgs& a, float* acc, float* ml) {
@@ -276,10 +288,13 @@ void ink_attn_partial(const InkAttnArgs& a, float* acc, float* ml) {
         float bm[3] = {-INFINITY, -INFINITY, -INFINITY};
         for (int jj = 0; jj < nk; ++jj) {
             const int j = jb + jj;
-            const uint16_t* k = a.kc + (size_t)(a.ring ? j % a.ring : j) * D;
             __m256 s0 = _mm256_setzero_ps(), s1 = _mm256_setzero_ps(), s2 = _mm256_setzero_ps();
+            alignas(32) float kf[D];
+            const uint16_t* k = nullptr;
+            if (a.kq) { const int8_t* kr = a.kq + (size_t)j * D; const float sc = a.ks[j]; for (int d = 0; d < D; ++d) kf[d] = (float)kr[d] * sc; }
+            else k = a.kc + (size_t)(a.ring ? j % a.ring : j) * D;
             for (int d = 0; d < D; d += 8) {
-                const __m256 kv = load_f16x8(k + d);
+                const __m256 kv = a.kq ? _mm256_loadu_ps(kf + d) : load_f16x8(k + d);
                 s0 = _mm256_fmadd_ps(kv, _mm256_loadu_ps(a.q + d), s0);
                 s1 = _mm256_fmadd_ps(kv, _mm256_loadu_ps(a.q + D + d), s1);
                 s2 = _mm256_fmadd_ps(kv, _mm256_loadu_ps(a.q + 2 * D + d), s2);
@@ -308,10 +323,13 @@ void ink_attn_partial(const InkAttnArgs& a, float* acc, float* ml) {
         }
         for (int jj = 0; jj < nk; ++jj) {
             const int j = jb + jj;
-            const uint16_t* v = a.vc + (size_t)(a.ring ? j % a.ring : j) * D;
+            alignas(32) float vf[D];
+            const uint16_t* v = nullptr;
+            if (a.vq) { const int8_t* vr = a.vq + (size_t)j * D; const float sc = a.vs[j]; for (int d = 0; d < D; ++d) vf[d] = (float)vr[d] * sc; }
+            else v = a.vc + (size_t)(a.ring ? j % a.ring : j) * D;
             const __m256 p0 = _mm256_set1_ps(s[0][jj]), p1 = _mm256_set1_ps(s[1][jj]), p2 = _mm256_set1_ps(s[2][jj]);
             for (int d = 0; d < D; d += 8) {
-                const __m256 vv = load_f16x8(v + d);
+                const __m256 vv = a.vq ? _mm256_loadu_ps(vf + d) : load_f16x8(v + d);
                 _mm256_storeu_ps(acc + d, _mm256_fmadd_ps(p0, vv, _mm256_loadu_ps(acc + d)));
                 _mm256_storeu_ps(acc + D + d, _mm256_fmadd_ps(p1, vv, _mm256_loadu_ps(acc + D + d)));
                 _mm256_storeu_ps(acc + 2 * D + d, _mm256_fmadd_ps(p2, vv, _mm256_loadu_ps(acc + 2 * D + d)));

@@ -206,7 +206,7 @@ void apply(Options& o, const Resolved& r, const std::string& flag, const std::st
     else if (c == "json-schema") o.json_schema = val;
     else if (c == "json-schema-file") o.json_schema = read_file(val);
     else if (c == "backend") o.backend = val;
-    else if (c == "kv") { if (val == "int4") o.kv_mode = 1; else if (val == "fp16") o.kv_mode = 2; else if (val == "fp32") o.kv_mode = 0; else fail("--kv fp32|fp16|int4"); }
+    else if (c == "kv") { if (val == "int4") o.kv_mode = 1; else if (val == "fp16") o.kv_mode = 2; else if (val == "fp32") o.kv_mode = 0; else if (val == "int8") setenv("QV_KV", "int8", 1); else fail("--kv fp32|fp16|int8|int4"); }
     else if (c == "kv4-kmode") o.kv4_kmode = val == "token" ? 1 : 0;
     else if (c == "mtp") o.mtp = true;
     else if (c == "no-mtp") o.mtp = false;

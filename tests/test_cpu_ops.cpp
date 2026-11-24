@@ -1,5 +1,5 @@
 // Tests for qv_cpu_ops: every op vs an independent scalar double-precision reference on random data.
-#include <immintrin.h>
+#include "../src/backends/cpu/cpu_relax.h"
 
 #include <cmath>
 #include <cstdio>

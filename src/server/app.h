@@ -61,7 +61,7 @@ struct Task {
     std::string prompt_text;
     int n_predict = -1;
     std::vector<std::string> stops;
-    bool cache_prompt = true, stream = false, return_tokens = false, timings_per_token = false, post_probs = false, ignore_eos = false;
+    bool cache_prompt = true, stream = false, return_tokens = false, timings_per_token = false, post_probs = false, ignore_eos = false, special = false;
     int id_slot = -1, n_probs = 0, n_keep = 0, n_choices = 1;
     SamplingParams sp;
     std::string grammar;

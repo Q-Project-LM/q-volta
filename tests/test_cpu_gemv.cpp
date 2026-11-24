@@ -1,5 +1,5 @@
 // CPU GEMV correctness: packer vs python fixture, kernel vs scalar reference on the same int8 activations.
-#include <immintrin.h>
+#include "../src/backends/cpu/cpu_relax.h"
 
 #include <cmath>
 #include <cstdio>
@@ -18,7 +18,7 @@ using namespace qv::cpu;
 static int g_fail = 0;
 #define CHECK(c, ...) do { if (!(c)) { std::printf("FAIL %s:%d ", __FILE__, __LINE__); std::printf(__VA_ARGS__); std::printf("\n"); ++g_fail; } } while (0)
 
-static float h2f(uint16_t h) { return _cvtsh_ss(h); }
+static float h2f(uint16_t h) { return qv_h2f(h); }
 
 static void test_fixture(const std::string& path) {
     std::ifstream f(path);
@@ -53,7 +53,7 @@ static void run_case(int N, int K, int bits, std::mt19937_64& rng, ThreadPool* p
     auto words = pack_q(q.data(), N, K, bits);
     std::vector<uint16_t> sm((size_t)N * G * 2);
     std::uniform_real_distribution<float> us(0.002f, 0.03f), um(-0.2f, 0.05f);
-    for (size_t i = 0; i < sm.size(); i += 2) { sm[i] = _cvtss_sh(us(rng), 0); sm[i + 1] = _cvtss_sh(um(rng), 0); }
+    for (size_t i = 0; i < sm.size(); i += 2) { sm[i] = qv_f2h(us(rng)); sm[i + 1] = qv_f2h(um(rng)); }
     std::normal_distribution<float> nd(0.f, 1.f);
     std::vector<float> x(K);
     for (auto& v : x) v = nd(rng) * (1.f + (rng() % 7 == 0 ? 20.f : 0.f));

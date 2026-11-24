@@ -8,9 +8,15 @@
 #include <functional>
 #include <thread>
 #include <vector>
-#include <immintrin.h>
-#include <sched.h>
+#include "cpu_relax.h"
 #include <time.h>
+#ifdef __linux__
+#include <sched.h>
+#define QV_HAVE_AFFINITY 1
+#elif defined(__APPLE__)
+#include <pthread.h>
+#include <pthread/qos.h>
+#endif
 
 namespace qv::cpu {
 
@@ -20,9 +26,12 @@ public:
 
     // nthreads includes the caller. cpus: cpu ids to pin to (tid i -> cpus[i]); empty = first nthreads allowed cpus.
     explicit ThreadPool(int nthreads, std::vector<int> cpus = {}) : n_(nthreads < 1 ? 1 : nthreads) {
+#ifdef QV_HAVE_AFFINITY
         sched_getaffinity(0, sizeof saved_, &saved_);  // restored in the destructor (caller is pinned meanwhile)
         if (cpus.empty())
             for (int c = 0; c < CPU_SETSIZE; ++c) if (CPU_ISSET(c, &saved_)) cpus.push_back(c);
+#endif
+        if (cpus.empty()) cpus.push_back(0);
         cpus_ = cpus;
         pin(cpus_[0 % cpus_.size()]);
         slots_ = new Slot[n_];
@@ -34,7 +43,9 @@ public:
         gen_.fetch_add(1, std::memory_order_release);
         for (auto& t : th_) t.join();
         delete[] slots_;
+#ifdef QV_HAVE_AFFINITY
         sched_setaffinity(0, sizeof saved_, &saved_);
+#endif
     }
     ThreadPool(const ThreadPool&) = delete;
     ThreadPool& operator=(const ThreadPool&) = delete;
@@ -62,8 +73,16 @@ private:
     struct alignas(64) Slot { std::atomic<uint32_t> done{0}; char pad[60]; };
 
     void pin(int cpu) {
+#ifdef QV_HAVE_AFFINITY
         cpu_set_t s; CPU_ZERO(&s); CPU_SET(cpu, &s);
         sched_setaffinity(0, sizeof s, &s);
+#elif defined(__APPLE__)
+        // macOS has no thread affinity: ask for the highest QoS so the scheduler keeps spinning workers on P-cores
+        (void)cpu;
+        pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+#else
+        (void)cpu;
+#endif
     }
     void range(int tid, size_t& b, size_t& e) const {
         const size_t units = (n_job_ + grain_ - 1) / grain_;
@@ -82,7 +101,7 @@ private:
         size_t b, e; range(0, b, e);
         if (b < e) fn(ctx, b, e, 0);
         for (int t = 1; t < n_; ++t)
-            while (slots_[t].done.load(std::memory_order_acquire) != g) _mm_pause();
+            while (slots_[t].done.load(std::memory_order_acquire) != g) QV_CPU_RELAX();
     }
     void claim_loop(int tid) {
         for (;;) {
@@ -105,7 +124,7 @@ private:
         claim_.store((uint64_t)(g >> 1) << 32, std::memory_order_release);
         gen_.store(g, std::memory_order_release);
         claim_loop(0);
-        while (completed_.load(std::memory_order_acquire) != units_) _mm_pause();
+        while (completed_.load(std::memory_order_acquire) != units_) QV_CPU_RELAX();
         claim_.store(~0ull, std::memory_order_release);  // retire: idx >= units for any late arrival
     }
     void worker(int tid) {
@@ -115,7 +134,7 @@ private:
         for (;;) {
             uint32_t g;
             while ((g = gen_.load(std::memory_order_acquire)) == seen) {
-                _mm_pause();
+                QV_CPU_RELAX();
                 if (++spins > (1u << 22)) {  // ~ tens of ms idle: back off
                     timespec ts{0, 50000}; nanosleep(&ts, nullptr);
                 }
@@ -130,7 +149,9 @@ private:
         }
     }
 
+#ifdef QV_HAVE_AFFINITY
     cpu_set_t saved_;
+#endif
     int n_;
     std::vector<int> cpus_;
     std::vector<std::thread> th_;

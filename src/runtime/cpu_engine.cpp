@@ -10,7 +10,13 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#include <immintrin.h>
+#include "cpu_relax.h"
+#ifndef MAP_POPULATE
+#define MAP_POPULATE 0
+#endif
+#ifndef MADV_HUGEPAGE
+#define MADV_HUGEPAGE MADV_NORMAL
+#endif
 
 #include <algorithm>
 #include <atomic>

@@ -47,6 +47,8 @@ struct InkAttnArgs {
     const float* proj;   // [16][rel_extent] fp32 (rel_logits_proj.proj)
     int p, j0, j1, ring, rel_extent;
     float scale;
+    const int8_t *kq = nullptr, *vq = nullptr;  // int8 KV (global layers): rows of 128 + one fp32 scale per row; kc/vc unused when set
+    const float *ks = nullptr, *vs = nullptr;
 };
 void ink_attn_partial(const InkAttnArgs& a, float* acc, float* ml);
 
@@ -59,5 +61,8 @@ void softcap_inplace(float* x, int n, float cap);
 
 // fp32 vector -> fp16 row (round to nearest even), 128-element rows
 void store_f16(const float* x, uint16_t* out, int n);
+
+// fp32 128-vector -> int8 row + scale (symmetric, absmax/127)
+void store_q8(const float* x, int8_t* out, float* scale);
 
 }  // namespace qv::cpu

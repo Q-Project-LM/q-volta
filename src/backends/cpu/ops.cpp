@@ -1,7 +1,7 @@
 // Q-Volta CPU decode ops: AVX2 + FMA + F16C implementations. See ops.h for the contract.
 #include "ops.h"
 
-#include <immintrin.h>
+#include "cpu_relax.h"
 
 #include <climits>
 #include <cmath>

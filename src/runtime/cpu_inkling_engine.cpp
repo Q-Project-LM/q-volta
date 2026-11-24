@@ -29,6 +29,7 @@
 #include <vector>
 
 #include "cpu_gemv.h"
+#include "cpu_relax.h"
 #include "cpu_inkling_engine.h"
 #include "ink_ops.h"
 #include "ops.h"
@@ -124,6 +125,7 @@ class InkCpuEngine final : public Engine, public InklingCpuInfo {
     }
     ~InkCpuEngine() override {
         if (owned_) std::free(map_);
+        else if (map_ && map_len_) munmap(map_, map_len_);
     }
 
     // ------------------------------------------------------------------------------------------------ Engine interface
@@ -229,11 +231,28 @@ class InkCpuEngine final : public Engine, public InklingCpuInfo {
         int fd = ::open(mf.bin_path.c_str(), O_RDONLY);
         if (fd < 0) throw std::runtime_error("cannot open " + mf.bin_path);
         map_len_ = mf.bin_size;
+        // QV_WEIGHTS=mmap (default on Android, where anonymous memory is OOM-killed): file-backed read-only mapping, pages are
+        // reclaimable instead of copied; QV_WEIGHTS=copy forces the pread-into-anonymous-buffer path.
+        const char* wm = std::getenv("QV_WEIGHTS");
+#ifdef __ANDROID__
+        const bool use_mmap = !(wm && std::string(wm) == "copy");
+#else
+        const bool use_mmap = wm && std::string(wm) == "mmap";
+#endif
+        if (use_mmap) {
+            map_ = mmap(nullptr, map_len_, PROT_READ, MAP_PRIVATE, fd, 0);
+            if (map_ == MAP_FAILED) { map_ = nullptr; throw std::runtime_error("mmap of weights failed"); }
+            ::close(fd);
+            base_ = (const char*)map_;
+            return;
+        }
         const size_t al = 2u << 20, len = (map_len_ + al - 1) / al * al;
         map_ = std::aligned_alloc(al, len);
         if (!map_) throw std::runtime_error("weight buffer allocation failed");
         owned_ = true;
+#ifdef MADV_HUGEPAGE
         madvise(map_, len, MADV_HUGEPAGE);
+#endif
         const size_t CH = 64u << 20, nch = (map_len_ + CH - 1) / CH;
         std::atomic<bool> bad{false};
         pool_.parallel_for_dyn(nch, [&](size_t b, size_t e, int) {
@@ -426,9 +445,12 @@ class InkCpuEngine final : public Engine, public InklingCpuInfo {
         kl_.resize(n_local_); vl_.resize(n_local_); kg_.resize(n_global_); vg_.resize(n_global_);
         for (auto& v : kl_) v.reset((uint16_t*)std::calloc(lsz, 2));
         for (auto& v : vl_) v.reset((uint16_t*)std::calloc(lsz, 2));
-        for (auto& v : kg_) v.reset((uint16_t*)std::calloc(gsz, 2));
-        for (auto& v : vg_) v.reset((uint16_t*)std::calloc(gsz, 2));
-        state_bytes_ = (size_t)n_local_ * lsz * 4 + (size_t)n_global_ * gsz * 4 + cstate_.size() * 4;
+        { const char* kv = std::getenv("QV_KV"); kv8_ = kv && std::string(kv) == "int8"; }
+        const size_t esz = kv8_ ? 1 : 2;  // int8 KV on global layers (the local ring is small): 1 B/elem + one fp32 scale per row
+        for (auto& v : kg_) v.reset((uint16_t*)std::calloc(gsz, esz));
+        for (auto& v : vg_) v.reset((uint16_t*)std::calloc(gsz, esz));
+        if (kv8_) { ksc_.assign(n_global_, std::vector<float>((size_t)NKV * opt_.max_ctx, 0.f)); vsc_ = ksc_; }
+        state_bytes_ = (size_t)n_local_ * lsz * 4 + (size_t)n_global_ * gsz * 2 * esz + (kv8_ ? (size_t)n_global_ * NKV * opt_.max_ctx * 8 : 0) + cstate_.size() * 4;
         // bytes touched per decode token
         double b = 0;
         for (const auto& ap : apps_) {
@@ -710,10 +732,16 @@ class InkCpuEngine final : public Engine, public InklingCpuInfo {
                         const float nk = std::sqrt(dot_f32(k, k, HD));
                         const float f = std::min(1.0f, qkclip / (nk + 1e-6f));
                         for (int d = 0; d < HD; ++d) k[d] *= f;
-                        store_f16(k, kcache + g * head_stride + row * HD, HD);
                         float v[HD];
                         rms_u(vc_.data() + (size_t)t * KD + g * HD, v, HD, 1e-6f);
-                        store_f16(v, vcache + g * head_stride + row * HD, HD);
+                        if (glob && kv8_) {
+                            const size_t o = g * head_stride + row * HD, so = (size_t)g * opt_.max_ctx + row;
+                            store_q8(k, (int8_t*)kcache + o, &ksc_[slot][so]);
+                            store_q8(v, (int8_t*)vcache + o, &vsc_[slot][so]);
+                        } else {
+                            store_f16(k, kcache + g * head_stride + row * HD, HD);
+                            store_f16(v, vcache + g * head_stride + row * HD, HD);
+                        }
                     }
                 }
             }, 1);
@@ -737,8 +765,13 @@ class InkCpuEngine final : public Engine, public InklingCpuInfo {
                     InkAttnArgs a;
                     a.q = qp_.data() + (size_t)t * QD + g * 3 * HD;
                     a.rel = relp_.data() + (size_t)t * NH * DREL + g * 3 * DREL;
-                    a.kc = kcache + g * head_stride;
-                    a.vc = vcache + g * head_stride;
+                    if (glob && kv8_) {
+                        a.kq = (const int8_t*)kcache + g * head_stride; a.vq = (const int8_t*)vcache + g * head_stride;
+                        a.ks = ksc_[slot].data() + (size_t)g * opt_.max_ctx; a.vs = vsc_[slot].data() + (size_t)g * opt_.max_ctx;
+                    } else {
+                        a.kc = kcache + g * head_stride;
+                        a.vc = vcache + g * head_stride;
+                    }
                     a.proj = w.relproj;
                     a.p = p; a.j0 = jlo + (int)((long)n * split / ns); a.j1 = jlo + (int)((long)n * (split + 1) / ns);
                     a.ring = glob ? 0 : RING; a.rel_extent = REXT; a.scale = 1.0f / std::sqrt((float)HD);
@@ -861,7 +894,7 @@ class InkCpuEngine final : public Engine, public InklingCpuInfo {
                 } else {
                     const size_t j = i - (size_t)8 * C13;
                     const int k = (int)(j / C2), c = (int)(j % C2);
-                    while (!ready_[k].v.load(std::memory_order_acquire)) _mm_pause();
+                    while (!ready_[k].v.load(std::memory_order_acquire)) QV_CPU_RELAX();
                     gemv_q(w.w2.view(sel_[k]), aq8_[k].a1, ypair_.data() + (size_t)k * H, c * 64, c * 64 + 64);
                 }
             }
@@ -1050,6 +1083,8 @@ class InkCpuEngine final : public Engine, public InklingCpuInfo {
     std::vector<LayerW> lw_;
     std::vector<AppInfo> apps_;
     int n_local_ = 0, n_global_ = 0;
+    bool kv8_ = false;
+    std::vector<std::vector<float>> ksc_, vsc_;
     double decode_bytes_ = 0;
     // activations
     std::vector<float> hid_, resid_, hm_, xm_, aout_, xin_[3], xn_[3], g64_[3], gcat_, gcat3_, prevB_, prevH_, preH_, msgs_, blk_;
