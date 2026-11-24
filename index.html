@@ -43,6 +43,7 @@ tr.q td:first-child{font-weight:700}tr.q{background:color-mix(in srgb,var(--a) 8
 .charts figure{margin:0;background:#fff;border:1px solid var(--line);border-radius:14px;padding:8px}
 .charts img{width:100%;display:block}
 pre{background:var(--code);color:var(--codefg);padding:16px;border-radius:12px;overflow-x:auto;font-size:13.5px;line-height:1.55}
+.shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin:14px 0}.shots figure{margin:0}.shots img{width:100%;display:block;border-radius:12px;border:1px solid var(--line)}.shots figcaption{color:var(--mut);font-size:13.5px;margin-top:6px}
 .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
 ul.f{padding-left:18px;margin:6px 0}ul.f li{margin:5px 0}
 footer{border-top:1px solid var(--line);margin-top:64px;padding:28px 0;color:var(--mut);font-size:14px;text-align:center}
@@ -51,7 +52,7 @@ footer{border-top:1px solid var(--line);margin-top:64px;padding:28px 0;color:var
 <body>
 <nav><div class="wrap">
   <a class="logo" href="#top"><img src="img/Q_Logo.svg" alt=""> Q-Volta</a>
-  <a href="#results">Results</a><a href="#compare">vs llama.cpp</a><a href="#start">Quick start</a><a href="#models">Models</a><a href="#caveats">Caveats</a>
+  <a href="#results">Results</a><a href="#compare">vs llama.cpp</a><a href="#start">Quick start</a><a href="#models">Models</a><a href="#ui">Web UI</a><a href="#caveats">Caveats</a>
   <a href="https://github.com/Q-Project-LM/q-volta">GitHub</a>
 </div></nav>
 
@@ -115,6 +116,15 @@ curl localhost:8080/v1/chat/completions -H 'Content-Type: application/json' \
   <ul class="f"><li><code>e1</code> 10.44 GiB, ppl +9.6%</li><li><code>e0</code> 12.63 GiB, ppl +12.3%</li><li>native MTP head, 256K context, pi-adapter supported as a merged model</li></ul></div>
   <div class="card"><h3 style="margin-top:0"><a href="https://huggingface.co/q-project/Inkling-2-Mini-QVolta">Inkling-2-Mini-QVolta</a></h3>
   <ul class="f"><li>9.89 GiB (26B MoE, 3.4B active, looped layers)</li><li>~120 tok/s decode on the V100 through the server</li><li>image input (vision sidecar, 0.6 GiB) and an optional exact MTP drafter (0.55&ndash;1.73&times;, text dependent)</li></ul></div>
+</div>
+
+<h2 id="ui">Built-in web UI</h2>
+<p class="sub">The server serves a chat UI at <code>/</code>: the llama.cpp web UI (MIT), rebuilt with the Q Project theme. Streaming, reasoning blocks, tool calls, settings and the API-key screen all work; dark by default, with a light theme and a phone layout.</p>
+<div class="shots">
+  <figure><img src="img/webui_home.png" alt="Q-Volta web UI, dark home screen" loading="lazy"><figcaption>Home (dark, default)</figcaption></figure>
+  <figure><img src="img/webui_reasoning.png" alt="Chat with reasoning block, list and code" loading="lazy"><figcaption>Reasoning, list and code block</figcaption></figure>
+  <figure><img src="img/webui_light_chat.png" alt="Light theme" loading="lazy"><figcaption>Light theme</figcaption></figure>
+  <figure><img src="img/webui_mobile_chat.png" alt="Mobile layout" loading="lazy" style="max-width:240px;margin:auto"><figcaption>Phone (390&nbsp;px)</figcaption></figure>
 </div>
 
 <h2 id="features">What is inside</h2>
