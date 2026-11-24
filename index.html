@@ -114,14 +114,14 @@ curl localhost:8080/v1/chat/completions -H 'Content-Type: application/json' \
   <div class="card"><h3 style="margin-top:0"><a href="https://huggingface.co/q-project/Qwen3.8-27B-QVolta">Qwen3.8-27B-QVolta</a></h3>
   <ul class="f"><li><code>e1</code> 10.44 GiB, ppl +9.6%</li><li><code>e0</code> 12.63 GiB, ppl +12.3%</li><li>native MTP head, 256K context, pi-adapter supported as a merged model</li></ul></div>
   <div class="card"><h3 style="margin-top:0"><a href="https://huggingface.co/q-project/Inkling-2-Mini-QVolta">Inkling-2-Mini-QVolta</a></h3>
-  <ul class="f"><li>9.89 GiB (26B MoE, 3.4B active, looped layers)</li><li>~120 tok/s decode on the V100 through the server</li><li>text only; no MTP / vision yet</li></ul></div>
+  <ul class="f"><li>9.89 GiB (26B MoE, 3.4B active, looped layers)</li><li>~120 tok/s decode on the V100 through the server</li><li>image input (vision sidecar, 0.6 GiB) and an optional exact MTP drafter (0.55&ndash;1.73&times;, text dependent)</li></ul></div>
 </div>
 
 <h2 id="features">What is inside</h2>
 <div class="cols">
   <div class="card"><b>Engine</b><ul class="f"><li>int8 dp4a GEMV decode at 81&ndash;99% of HBM peak, CUDA graphs</li><li>tensor-core flash prefill</li><li>exact multi-token verify for MTP</li><li>AVX2 CPU backend with huge-page weights</li></ul></div>
-  <div class="card"><b>Format &amp; quantization</b><ul class="f"><li>single-file <code>.qv</code> container</li><li>2&ndash;8 bit bit-planes, GPTQ-style calibration</li><li>int4 KV cache (KIVI-style)</li></ul></div>
-  <div class="card"><b>Server</b><ul class="f"><li>llama-server flags and endpoints</li><li>OpenAI chat / completions, tools, grammars</li><li>jinja chat templates</li></ul></div>
+  <div class="card"><b>Format &amp; quantization</b><ul class="f"><li>single-file <code>.qv</code> container with tokenizer and chat template</li><li>2&ndash;8 bit bit-planes, GPTQ-style calibration</li><li>int4 KV cache (KIVI-style)</li></ul></div>
+  <div class="card"><b>Server</b><ul class="f"><li>llama-server flags and endpoints</li><li>OpenAI chat / completions, tools, grammars</li><li>jinja chat templates</li><li>embedded web UI, Anthropic <code>/v1/messages</code>, multi-model routing</li></ul></div>
 </div>
 
 <h2 id="caveats">Honest caveats</h2>
