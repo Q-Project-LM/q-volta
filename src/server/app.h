@@ -19,6 +19,7 @@
 #include "qv/engine.h"
 #include "sampling/sampler.h"
 #include "server/chat_render.h"
+#include "server/checkpoint_pool.h"
 #include "server/compat_api.h"
 #include "server/http.h"
 #include "server/options.h"
@@ -251,8 +252,12 @@ class App {
     FairMutex eng_mu_;  // engine operations (prefill chunk / decode step) of the concurrently running sequences
     std::vector<SlotInfo> slots_;
     std::vector<std::vector<int>> slot_cached_;  // per sequence: tokens inside the engine (logits valid for exactly this context)
+    std::vector<std::vector<PromptCheckpoint>> slot_ckpts_;
+    std::vector<char> slot_cacheable_;  // per sequence: whether current VRAM context is eligible for L2 parking
+    ParkedCheckpointPool parked_pool_;  // L2 host-RAM parked context pool (LRU, RAM-capped)
     int seq_of(int sid) const { return multi_seq ? sid : 0; }
     std::vector<int>& cached_of(int sid) { return slot_cached_[seq_of(sid)]; }
+    std::vector<PromptCheckpoint>& ckpts_of(int sid) { return slot_ckpts_[seq_of(sid)]; }
     int owner_slot_ = 0;
     long task_counter_ = 0;
     // metrics

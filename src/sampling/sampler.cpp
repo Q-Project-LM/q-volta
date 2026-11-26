@@ -24,6 +24,7 @@ void Sampler::apply_penalties(std::vector<float>& lg) const {
     size_t last = p_.repeat_last_n < 0 ? n : std::min<size_t>(n, (size_t)p_.repeat_last_n);
     if (last == 0) return;
     std::unordered_map<int, int> cnt;
+    cnt.reserve(last);
     for (size_t i = n - last; i < n; ++i) ++cnt[hist_[i]];
     for (auto& [t, c] : cnt) {
         if (t < 0 || t >= (int)lg.size()) continue;
@@ -68,6 +69,18 @@ void Sampler::sort_desc() {
     sorted_ = true;
 }
 
+void Sampler::keep_best_one() {
+    if (cur_.empty()) return;
+    if (!sorted_) {
+        auto it = std::min_element(cur_.begin(), cur_.end(), [](const Cand& a, const Cand& b) {
+            return a.logit > b.logit || (a.logit == b.logit && a.id < b.id);
+        });
+        cur_[0] = *it;
+        sorted_ = true;
+    }
+    cur_.resize(1);
+}
+
 void Sampler::softmax() {
     sort_desc();
     if (cur_.empty()) return;
@@ -91,6 +104,37 @@ void Sampler::s_top_k(int k) {
 
 void Sampler::s_top_p(float p) {
     if (p >= 1.0f) return;
+    if (!sorted_ && cur_.size() > 1024) {
+        float mx = -INFINITY;
+        for (const auto& c : cur_) mx = std::max(mx, c.logit);
+        if (std::isfinite(mx)) {
+            double sum_exp = 0.0;
+            std::vector<Cand> top;
+            top.reserve(256);
+            for (const auto& c : cur_) {
+                const float d = c.logit - mx;
+                if (d > -36.0f) sum_exp += std::exp((double)d);
+                if (d >= -14.0f) top.push_back(c);
+            }
+            if (sum_exp > 0.0 && std::isfinite(sum_exp) && !top.empty()) {
+                std::sort(top.begin(), top.end(), [](const Cand& a, const Cand& b) {
+                    return a.logit > b.logit || (a.logit == b.logit && a.id < b.id);
+                });
+                const size_t min_k = (size_t)std::max(1, p_.min_keep);
+                double cum = 0.0;
+                for (size_t i = 0; i < top.size(); ++i) {
+                    top[i].p = (float)(std::exp((double)top[i].logit - (double)mx) / sum_exp);
+                    cum += top[i].p;
+                    if (cum >= p && i + 1 >= min_k) {
+                        top.resize(i + 1);
+                        cur_.swap(top);
+                        sorted_ = true;
+                        return;
+                    }
+                }
+            }
+        }
+    }
     softmax();
     double c = 0;
     size_t keep = cur_.size();
@@ -103,6 +147,33 @@ void Sampler::s_top_p(float p) {
 
 void Sampler::s_min_p(float p) {
     if (p <= 0.0f || cur_.empty()) return;
+    if (!sorted_ && cur_.size() > 1024) {
+        float mx = -INFINITY;
+        for (const auto& c : cur_) mx = std::max(mx, c.logit);
+        if (std::isfinite(mx)) {
+            const float thr = mx + std::log(p) - 1e-4f;
+            std::vector<Cand> top;
+            top.reserve(256);
+            for (const auto& c : cur_) {
+                if (c.logit >= thr) top.push_back(c);
+            }
+            const size_t min_k = (size_t)std::max(1, p_.min_keep);
+            if (top.size() >= min_k) {
+                std::sort(top.begin(), top.end(), [](const Cand& a, const Cand& b) {
+                    return a.logit > b.logit || (a.logit == b.logit && a.id < b.id);
+                });
+                size_t keep = 0;
+                while (keep < top.size() && std::exp((double)top[keep].logit - (double)mx) >= (double)p) ++keep;
+                keep = std::max(keep, min_k);
+                top.resize(std::min(keep, top.size()));
+                cur_.swap(top);
+                sorted_ = true;
+                return;
+            }
+            s_top_k((int)min_k);
+            return;
+        }
+    }
     softmax();
     float thr = cur_[0].p * p;
     size_t keep = 0;
@@ -166,7 +237,7 @@ void Sampler::s_temp() {
         double maxent = std::log((double)cur_.size()), norm = maxent > 0 ? ent / maxent : 0;
         t = (float)(mn + (mxt - mn) * std::pow(norm, p_.dynatemp_exponent));
     }
-    if (t <= 0.0f) { sort_desc(); if (!cur_.empty()) cur_.resize(1); return; }
+    if (t <= 0.0f) { keep_best_one(); return; }
     for (auto& c : cur_) c.logit /= t;
 }
 
@@ -176,12 +247,27 @@ int Sampler::draw() {
     if (cur_.size() == 1) { (void)dist(rng_); return cur_[0].id; }
     float mx = cur_[0].logit;
     if (!sorted_) for (auto& c : cur_) mx = std::max(mx, c.logit);
+    if (!std::isfinite(mx)) {
+        (void)dist(rng_);
+        return cur_[0].id;
+    }
     double sum = 0;
-    for (auto& c : cur_) { c.p = expf(c.logit - mx); sum += c.p; }
+    for (auto& c : cur_) {
+        const float d = c.logit - mx;
+        if (d > -36.0f) {
+            c.p = expf(d);
+            sum += c.p;
+        } else {
+            c.p = 0.0f;
+        }
+    }
     double rnd = dist(rng_), run = 0, tgt = sum * rnd;
     int sel = (int)cur_.size() - 1;
     for (size_t i = 0; i < cur_.size(); ++i) { run += cur_[i].p; if (run >= tgt) { sel = (int)i; break; } }
-    for (auto& c : cur_) c.p = (float)(c.p / sum);
+    if (want_post_ && sum > 0.0) {
+        const double inv_s = 1.0 / sum;
+        for (auto& c : cur_) c.p = (float)(c.p * inv_s);
+    }
     return cur_[sel].id;
 }
 
@@ -250,6 +336,14 @@ int Sampler::sample(std::vector<float>& lg) {
     bool pen_done = false;
     auto ensure = [&] {
         if (!cur_.empty()) return;
+        if (constraint_ != nullptr && p_.top_n_sigma <= 0.0f) {
+            cur_.reserve(std::min(V, 4096));
+            for (int i = 0; i < V; ++i) {
+                if (std::isfinite(lg[i])) cur_.push_back({i, lg[i], 0});
+            }
+            if (cur_.size() >= (size_t)std::max(1, p_.min_keep)) return;
+            cur_.clear();
+        }
         cur_.resize(V);
         for (int i = 0; i < V; ++i) cur_[i] = {i, lg[i], 0};
     };
@@ -270,8 +364,7 @@ int Sampler::sample(std::vector<float>& lg) {
     (void)pen_done;
     ensure();
     if (p_.temperature <= 0.0f && std::find(p_.samplers.begin(), p_.samplers.end(), "temperature") == p_.samplers.end()) {
-        sort_desc();
-        cur_.resize(1);
+        keep_best_one();
     }
     int id = draw();
     return finish(id);

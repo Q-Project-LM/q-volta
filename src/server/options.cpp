@@ -31,11 +31,13 @@ const std::vector<FlagEntry>& table() {
 struct OwnFlag { const char* name; const char* canon; int arg; };
 const OwnFlag kOwn[] = {
     {"--backend", "backend", 1}, {"--kv", "kv", 1}, {"--kv4-kmode", "kv4-kmode", 1}, {"--mtp", "mtp", 0}, {"--no-mtp", "no-mtp", 0},
+    {"--mtp-grammar", "mtp-grammar", 0}, {"--no-mtp-grammar", "no-mtp-grammar", 0},
     {"--mtp-depth", "mtp-depth", 1}, {"--mtp-file", "mtp-file", 1}, {"--prefill-chunk", "prefill-chunk", 1}, {"--tokenizer", "tokenizer", 1}, {"--no-embedded-defaults", "no-embedded-defaults", 0},
     {"--model-name", "alias", 1}, {"--max-ctx", "ctx-size", 1}, {"--http-threads", "threads-http", 1}, {"--max-queue", "max-queue", 1},
     {"--default-max-tokens", "predict", 1}, {"--quiet", "log-disable", 0}, {"--mock-text", "mock-text", 1},
     {"--mock-loop", "mock-loop", 0}, {"--vision-file", "vision-file", 1}, {"--allow-remote-images", "allow-remote-images", 0}, {"--image-root", "image-root", 1},
     {"--image-max-side", "image-max-side", 1}, {"--image-token", "image-token", 1}, {"--mlock", "mlock", 0}, {"--no-mlock", "no-mlock", 0}, {"--mmap", "mmap", 0}, {"--no-mmap", "no-mmap", 0}, {"--mock-delay-us", "mock-delay-us", 1},
+    {"--checkpoint-slots", "checkpoint-slots", 1}, {"--checkpoint-ram-mb", "checkpoint-ram-mb", 1}, {"--checkpoint-min-tokens", "checkpoint-min-tokens", 1},
 };
 
 bool truthy(const std::string& v) { return v == "1" || v == "on" || v == "enabled" || v == "true" || v == "yes"; }
@@ -96,7 +98,8 @@ const std::set<std::string>& handled() {
         "dry-multiplier", "dry-base", "dry-allowed-length", "dry-penalty-last-n", "dry-sequence-breaker", "mirostat", "mirostat-lr", "mirostat-ent",
         "dynatemp-range", "dynatemp-exp", "seed", "samplers", "ignore-eos", "logit-bias", "timeout", "path", "ui", "log-disable", "verbose", "log-verbosity",
         "slot-save-path", "special", "cors-origins", "cors-methods", "cors-headers", "cors-credentials", "api-prefix", "min-keep", "grammar", "grammar-file", "json-schema", "json-schema-file", "help", "version",
-        "backend", "kv", "kv4-kmode", "mtp", "no-mtp", "mtp-depth", "mtp-file", "prefill-chunk", "tokenizer", "no-embedded-defaults", "max-queue", "mock-text", "mock-loop", "mock-delay-us",
+        "backend", "kv", "kv4-kmode", "mtp", "no-mtp", "mtp-grammar", "no-mtp-grammar", "mtp-depth", "mtp-file", "prefill-chunk", "tokenizer", "no-embedded-defaults", "max-queue", "mock-text", "mock-loop", "mock-delay-us",
+        "checkpoint-slots", "checkpoint-ram-mb", "checkpoint-min-tokens",
         "reasoning-preserve", "context-shift", "warmup", "flash-attn", "mlock", "mmap", "no-mmap", "perf", "escape", "verbosity", "log-colors", "log-timestamps",
         "log-prefix", "kv-unified", "cache-idle-slots", "lora", "lora-scaled", "ssl-key-file", "ssl-cert-file", "hf-repo", "model-url", "docker-repo",
         "hf-file", "hf-token", "offline", "no-mlock", "vision-file", "allow-remote-images", "image-root", "image-max-side", "image-token",
@@ -211,6 +214,8 @@ void apply(Options& o, const Resolved& r, const std::string& flag, const std::st
     else if (c == "kv4-kmode") o.kv4_kmode = val == "token" ? 1 : 0;
     else if (c == "mtp") o.mtp = true;
     else if (c == "no-mtp") o.mtp = false;
+    else if (c == "mtp-grammar") o.mtp_grammar = true;
+    else if (c == "no-mtp-grammar") o.mtp_grammar = false;
     else if (c == "mtp-depth") o.mtp_depth = to_int(val, flag);
     else if (c == "mtp-file") o.mtp_file = val;
     else if (c == "prefill-chunk") o.prefill_chunk = to_int(val, flag);
@@ -225,6 +230,9 @@ void apply(Options& o, const Resolved& r, const std::string& flag, const std::st
     else if (c == "mock-text") o.mock_text = val;
     else if (c == "mock-loop") o.mock_loop = true;
     else if (c == "mock-delay-us") o.mock_delay_us = to_int(val, flag);
+    else if (c == "checkpoint-slots") o.checkpoint_slots = std::max(0, to_int(val, flag));
+    else if (c == "checkpoint-ram-mb") o.checkpoint_ram_mb = std::max(0, to_int(val, flag));
+    else if (c == "checkpoint-min-tokens") o.checkpoint_min_tokens = std::max(0, to_int(val, flag));
     else if (c == "lora" || c == "lora-scaled") fail("LoRA adapters are not applied at runtime by qv_server: merge the adapter at conversion time (tools/convert.py --lora DIR); refusing to start with " + flag);
     else if (c == "ssl-key-file" || c == "ssl-cert-file") fail("the server is built without SSL support (" + flag + ")");
     else if (c == "hf-repo" || c == "model-url" || c == "docker-repo") fail(flag + ": downloading models is not supported; pass a local Q-Volta model with -m");

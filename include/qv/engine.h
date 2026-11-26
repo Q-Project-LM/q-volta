@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "qv/model.h"
+#include "qv/spec_sampling.h"
 
 namespace qv {
 
@@ -51,6 +52,22 @@ class Engine {
     }
     // Greedy decode n tokens; first = token at start_pos (argmax of the logits after the context).
     virtual void decode_greedy(int first, int start_pos, int n, std::vector<int>& out, bool use_graph) = 0;
+    // Lossless speculative sampling of n tokens (temperature > 0).
+    virtual bool has_speculative_decode() const { return false; }
+    virtual void decode_speculative(int first, int start_pos, int n, const SpecSamplingParams& sp, std::vector<int>& out) {
+        (void)first; (void)start_pos; (void)n; (void)sp; (void)out;
+        throw std::runtime_error("this engine does not support speculative sampling");
+    }
+    // Constrained MTP variants: verify-time TokenConstraint; may return fewer than `n` tokens if `tc->is_eog(tok)` or `tc->is_dead()`.
+    virtual bool has_constrained_mtp() const { return false; }
+    virtual void decode_greedy_constrained(int first, int start_pos, int n, std::vector<int>& out, TokenConstraint* tc) {
+        (void)tc;
+        decode_greedy(first, start_pos, n, out, false);
+    }
+    virtual void decode_speculative_constrained(int first, int start_pos, int n, const SpecSamplingParams& sp, std::vector<int>& out, TokenConstraint* tc) {
+        (void)tc;
+        decode_speculative(first, start_pos, n, sp, out);
+    }
     virtual int argmax() = 0;                         // greedy next token from the last step's logits
     virtual void logits(std::vector<float>& out) = 0; // copy last logits to host
     virtual void reset() = 0;                         // clear recurrent/KV state
@@ -59,8 +76,21 @@ class Engine {
     virtual void sync() = 0;
     // research hooks (CPU backend, branch p9/tier): snapshot/restore the recurrent state (GDN + conv; KV is rewritten by replay),
     // and switch single-token attention to sparse block retrieval ("off" or "sink,recent,block,k[,agg]").
+    virtual bool has_state_save() const { return false; }
     virtual void state_save() {}
     virtual void state_restore() {}
+    // Host-RAM prefix checkpoint of the CURRENT sequence (mutable recurrent/conv state, ring KV windows, last logits).
+    // Safe to restore as long as non-ring KV positions [0, checkpoint_pos) have not been overwritten since save_checkpoint().
+    virtual bool has_checkpoint() const { return false; }
+    virtual bool save_checkpoint(std::vector<uint8_t>& out) { (void)out; return false; }
+    virtual bool restore_checkpoint(const std::vector<uint8_t>& in) { (void)in; return false; }
+    virtual size_t checkpoint_bytes() const { return 0; }
+    // Host-RAM snapshot of the CURRENT sequence's non-ring KV cache prefix [0, n_tokens),
+    // paired with save_checkpoint()/restore_checkpoint() for independent parked context slots.
+    virtual bool has_kv_checkpoint() const { return false; }
+    virtual size_t kv_checkpoint_bytes(int n_tokens) const { (void)n_tokens; return 0; }
+    virtual bool save_kv_prefix(std::vector<uint8_t>& out, int n_tokens) { (void)out; (void)n_tokens; return false; }
+    virtual bool restore_kv_prefix(const std::vector<uint8_t>& in) { (void)in; return false; }
     virtual void set_sparse(const std::string&) {}
     virtual void set_mtp_enabled(bool) {}  // runtime switch (needs EngineOptions::mtp at construction)
     virtual void mtp_stats(MtpStats& s) const { s = MtpStats(); }

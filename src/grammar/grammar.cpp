@@ -814,17 +814,25 @@ bool GrammarState::feed(std::string_view s) {
 
 bool GrammarState::accept(std::string_view piece) {
     if (awaiting_) {
-        size_t beg = trig_buf_.size();
+        size_t max_w = 0;
+        for (const auto& w : trig_.words) max_w = std::max(max_w, w.size());
+        const size_t beg = trig_buf_.size();
         trig_buf_.append(piece);
-        for (auto& w : trig_.words) {
-            size_t f = trig_buf_.find(w);
+        const size_t search_from = (beg > max_w) ? (beg - max_w) : 0;
+        for (const auto& w : trig_.words) {
+            size_t f = trig_buf_.find(w, search_from);
             if (f != std::string::npos) {
                 awaiting_ = false;
                 std::string replay = trig_buf_.substr(f);
                 trig_buf_.clear();
-                (void)beg;
+                trig_buf_.shrink_to_fit();
                 return feed(replay);
             }
+        }
+        if (max_w > 1 && trig_buf_.size() >= max_w) {
+            trig_buf_.erase(0, trig_buf_.size() - (max_w - 1));
+        } else if (max_w <= 1) {
+            trig_buf_.clear();
         }
         return true;
     }
