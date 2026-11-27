@@ -497,4 +497,27 @@ inline int spec_round_point(int nd, const int* drafts, DistFn&& dist_of, std::mt
     return nd;  // unreachable
 }
 
+
+// Same round with a sampled drafter: draft j was drawn from the distribution q_j (q_of(j, SpecDist&)); accept with probability min(1, p/q), on rejection draw from the
+// normalised residual max(0, p - q). Lossless for any q.
+template <class DistFn, class QFn>
+inline int spec_round_q(int nd, const int* drafts, DistFn&& dist_of, QFn&& q_of, std::mt19937_64& rng, int* seq, int* n_acc = nullptr) {
+    int acc = 0;
+    for (int j = 0; j <= nd; ++j) {
+        SpecDist pj;
+        dist_of(j, pj);
+        if (j < nd) {
+            SpecDist q;
+            q_of(j, q);
+            if (spec_accept(pj, q, drafts[j], rng)) { seq[j] = drafts[j]; acc = j + 1; continue; }
+            seq[j] = sample_residual(pj, q, rng);
+        } else {
+            seq[j] = sample_dist(pj, rng);
+        }
+        if (n_acc) *n_acc = acc;
+        return j;
+    }
+    return nd;
+}
+
 }  // namespace qv

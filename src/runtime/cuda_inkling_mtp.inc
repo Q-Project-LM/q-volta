@@ -40,6 +40,13 @@ int* h_scid_ = nullptr; float* h_scval_ = nullptr; ik_CandMeta* h_smeta_ = nullp
 std::vector<float> h_sfull_;
 cudaGraphExec_t g_spA_[9] = {}, g_spB_[9] = {};
 float spA_margin_[9] = {};
+bool spA_sampled_[9] = {};
+ik::DraftSampleParams spA_dsp_[9];
+ik::DraftSampleParams dsp_;
+bool dsp_on_ = false;  // draft_block(): sample the drafts instead of argmax (graph A with sampled drafts)
+float* dlog_ = nullptr;
+int *d_dq_id_ = nullptr, *d_dq_cnt_ = nullptr, *h_dq_id_ = nullptr, *h_dq_cnt_ = nullptr;
+float *d_dq_prob_ = nullptr, *h_dq_prob_ = nullptr;
 cudaGraphExec_t g_mtp_[9] = {};
 MtpStats mstats_;
 
@@ -147,6 +154,11 @@ void alloc_mtp() {
     QV_CUDA_CHECK(cudaMallocHost(&h_smeta_, RR * sizeof(ik_CandMeta)));
     QV_CUDA_CHECK(cudaMallocHost(&h_svtok_, RR * sizeof(int)));
     QV_CUDA_CHECK(cudaMallocHost(&h_sst_, 8 * sizeof(int)));
+    std::memset(h_sst_, 0, 8 * sizeof(int));
+    dlog_ = dalloc<float>(N); d_dq_id_ = dalloc<int>(8 * 256); d_dq_prob_ = dalloc<float>(8 * 256); d_dq_cnt_ = dalloc<int>(8);
+    QV_CUDA_CHECK(cudaMallocHost(&h_dq_id_, 8 * 256 * sizeof(int)));
+    QV_CUDA_CHECK(cudaMallocHost(&h_dq_prob_, 8 * 256 * sizeof(float)));
+    QV_CUDA_CHECK(cudaMallocHost(&h_dq_cnt_, 8 * sizeof(int)));
     extract_top_candidates_batch(logitsv_, N, RR, 14.0f, SP_MAXC, d_scid_, d_scval_, d_smeta_, stream_);  // allocates the kernel's static scratch outside capture
     argmax_advance(logitsv_, N, vy_, nullptr, nullptr, stream_);  // same for the argmax scratch (the first graph capture may come before any plain step)
     QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
@@ -331,7 +343,7 @@ void run_app_v(const App& A, int R) {
 }
 
 // ---- draft block (7 greedy tokens into vtok_[1..7]); anchor = vst_[0], position vst_[1]
-void draft_block() {
+void draft_block(int nsteps = RR - 1) {  // nsteps = number of drafts needed (R - 1): the Markov steps are sequential, so fewer steps change nothing
     cudaStream_t s = stream_;
     const int H = ik::H, N = cfg_.ink.unpadded_vocab;
     const int* pos0 = vst_ + 1;
@@ -393,16 +405,22 @@ void draft_block() {
         G.d[G.n++] = gdh_rows(DMat16{rnn_wb_, 768, 4608}, dxcat_, 2 * H, dctx_, 768, RR - 1);
         ik::mgemv_rows(G, 5, RR - 1, s);
     }
-    for (int j = 0; j < RR - 1; ++j) {
+    for (int j = 0; j < nsteps; ++j) {
         ik::mk_step(w1_, rnn_wa_, dctx_ + (size_t)j * 768, rnn_bias_, j == 0 ? vst_ : vtok_ + j, mkstate_, dq8lat_, j == 0, s);
         gemv_q8(foldw_, Q8Vec(dq8lat_), dbias_, nullptr, s);
-        ik::add_argmax(dbase_ + (size_t)(j + 1) * N, dbias_, fold_bias_, N, asv_, asi_, vtok_ + j + 1, s);
+        if (!dsp_on_) {
+            ik::add_argmax(dbase_ + (size_t)(j + 1) * N, dbias_, fold_bias_, N, asv_, asi_, vtok_ + j + 1, s);
+        } else {
+            ik::draft_logits(dbase_ + (size_t)(j + 1) * N, dbias_, fold_bias_, N, cfg_.ink.final_logit_softcap, dlog_, s);
+            ik::draft_sample(dlog_, N, dsp_, reinterpret_cast<const unsigned long long*>(vst_ + 6), j, d_scid_, d_scval_, d_smeta_, d_dq_id_ + j * 256, d_dq_prob_ + j * 256,
+                             d_dq_cnt_ + j, vtok_ + j + 1, s);
+        }
     }
 }
 
 void mtp_cycle(int R) {
     cudaStream_t s = stream_;
-    draft_block();
+    draft_block(R - 1);
     QV_CUDA_CHECK(cudaMemcpyAsync(vtok_, vst_, 4, cudaMemcpyDeviceToDevice, s));
     verify_forward(R);
     ik::accept_rows(vtok_, vy_, R, vst_, d_gen_, nacc_hist_, s);
@@ -467,13 +485,20 @@ void sp_build_row(const float* dlog, int row, float margin, const SpecSamplingPa
         build_dist_dense(h_sfull_.data(), N, sp, out);
     }
 }
-void sp_cycleA(int R, float margin) {
+void sp_cycleA(int R, float margin, bool sampled) {
     cudaStream_t s = stream_;
-    draft_block();
+    dsp_on_ = sampled;
+    draft_block(R - 1);
+    dsp_on_ = false;
     QV_CUDA_CHECK(cudaMemcpyAsync(vtok_, vst_, 4, cudaMemcpyDeviceToDevice, s));
     verify_forward(R);
     if (margin >= 0.0f) sp_extract_async(logitsv_, R, margin);
     QV_CUDA_CHECK(cudaMemcpyAsync(h_svtok_, vtok_, R * sizeof(int), cudaMemcpyDeviceToHost, s));
+    if (sampled) {
+        QV_CUDA_CHECK(cudaMemcpyAsync(h_dq_cnt_, d_dq_cnt_, (R - 1) * sizeof(int), cudaMemcpyDeviceToHost, s));
+        QV_CUDA_CHECK(cudaMemcpyAsync(h_dq_id_, d_dq_id_, (size_t)(R - 1) * 256 * sizeof(int), cudaMemcpyDeviceToHost, s));
+        QV_CUDA_CHECK(cudaMemcpyAsync(h_dq_prob_, d_dq_prob_, (size_t)(R - 1) * 256 * sizeof(float), cudaMemcpyDeviceToHost, s));
+    }
 }
 void sp_cycleB(int R) {
     cudaStream_t s = stream_;
@@ -498,12 +523,13 @@ cudaGraphExec_t sp_capture(F fn) {
     QV_CUDA_CHECK(cudaGraphDestroy(g));
     return ge;
 }
-void sp_graphs(int R, float margin) {
+void sp_graphs(int R, float margin, bool sampled, const ik::DraftSampleParams& dp) {
     if (!g_spB_[R]) g_spB_[R] = sp_capture([&] { sp_cycleB(R); });
-    if (!g_spA_[R] || spA_margin_[R] != margin) {
+    if (!g_spA_[R] || spA_margin_[R] != margin || spA_sampled_[R] != sampled || (sampled && !(spA_dsp_[R] == dp))) {
         if (g_spA_[R]) cudaGraphExecDestroy(g_spA_[R]);
-        g_spA_[R] = sp_capture([&] { sp_cycleA(R, margin); });
-        spA_margin_[R] = margin;
+        dsp_ = dp;
+        g_spA_[R] = sp_capture([&] { sp_cycleA(R, margin, sampled); });
+        spA_margin_[R] = margin; spA_sampled_[R] = sampled; spA_dsp_[R] = dp;
     }
 }
 // verify width for `rem` tokens still to produce (a cycle emits at most R tokens, never more than rem): 0 = use a plain step
@@ -515,6 +541,12 @@ void mtp_decode_spec(int first, int start_pos, int n, const SpecSamplingParams& 
     const int Rmax = std::min(8, std::max(2, opt_.mtp_depth + 1));
     const int Rtop = Rmax <= 2 ? 2 : Rmax == 3 ? 3 : Rmax <= 4 ? 4 : 8;
     const float margin = spec_candidate_margin(sp);
+    // QV_SPEC_DRAFT: point (default: greedy drafts, point-mass proposal) | sample (drafts drawn from the drafter distribution; measured the same acceptance, see docs/INKLING_MTP.md)
+    const char* dm = std::getenv("QV_SPEC_DRAFT");
+    const bool sampled = sp.temperature > 0.0f && dm && std::string(dm) == "sample";
+    ik::DraftSampleParams dp;
+    dp.temperature = sp.temperature; dp.top_k = sp.top_k; dp.top_p = sp.top_p; dp.min_p = sp.min_p; dp.min_keep = sp.min_keep; dp.max_extract = SP_MAXC;
+    dp.margin = (sp.min_p > 0.0f && sp.min_keep <= 1) ? std::max(3.5f, -std::log(sp.min_p) + 0.1f) : std::min(9.0f, std::max(4.0f, 7.5f * sp.temperature));
     if (start_pos + n + RR > opt_.max_ctx) throw std::runtime_error("context overflow");
     using clk = std::chrono::steady_clock;
     auto ms = [](clk::time_point a, clk::time_point b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
@@ -524,9 +556,10 @@ void mtp_decode_spec(int first, int start_pos, int n, const SpecSamplingParams& 
     int cur = first, p = start_pos;
     int R = sp_pick_r(n, Rtop);
     if (R) {
-        sp_graphs(R, margin);
+        sp_graphs(R, margin, sampled, dp);
         h_sst_[0] = cur; h_sst_[1] = p; h_sst_[2] = 0;
-        QV_CUDA_CHECK(cudaMemcpyAsync(vst_, h_sst_, 12, cudaMemcpyHostToDevice, stream_));
+        { const unsigned long long sd = rng(); std::memcpy(h_sst_ + 6, &sd, 8); }
+        QV_CUDA_CHECK(cudaMemcpyAsync(vst_, h_sst_, 32, cudaMemcpyHostToDevice, stream_));
         QV_CUDA_CHECK(cudaStreamSynchronize(stream_));  // h_sst_ is reused below
         auto t0 = clk::now();
         QV_CUDA_CHECK(cudaGraphLaunch(g_spA_[R], stream_));
@@ -537,11 +570,23 @@ void mtp_decode_spec(int first, int start_pos, int n, const SpecSamplingParams& 
             for (int j = 0; j < R - 1; ++j) drafts[j] = h_svtok_[j + 1];
             int n_acc = 0;
             int seq[8];
-            const int m = spec_round_point(R - 1, drafts, [&](int j, SpecDist& d) { sp_build_row(logitsv_, j, margin, sp, d); }, rng, seq, &n_acc);
+            int m;
+            if (!sampled) {
+                m = spec_round_point(R - 1, drafts, [&](int j, SpecDist& d) { sp_build_row(logitsv_, j, margin, sp, d); }, rng, seq, &n_acc);
+            } else {
+                m = spec_round_q(R - 1, drafts, [&](int j, SpecDist& d) { sp_build_row(logitsv_, j, margin, sp, d); },
+                                 [&](int j, SpecDist& q) {
+                                     const int qc = std::clamp(h_dq_cnt_[j], 0, 256);
+                                     q.dense = false; q.dn.clear(); q.sp.resize((size_t)qc);
+                                     for (int i = 0; i < qc; ++i) q.sp[(size_t)i] = {h_dq_id_[j * 256 + i], h_dq_prob_[j * 256 + i]};
+                                     std::sort(q.sp.begin(), q.sp.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+                                 }, rng, seq, &n_acc);
+            }
             const int tok_final = seq[m];
             for (int j = 0; j <= m; ++j) out.push_back(seq[j]);
             h_sst_[0] = tok_final; h_sst_[1] = p; h_sst_[2] = m + 1;
-            QV_CUDA_CHECK(cudaMemcpyAsync(vst_, h_sst_, 12, cudaMemcpyHostToDevice, stream_));
+            { const unsigned long long sd = rng(); std::memcpy(h_sst_ + 6, &sd, 8); }
+            QV_CUDA_CHECK(cudaMemcpyAsync(vst_, h_sst_, 32, cudaMemcpyHostToDevice, stream_));
             QV_CUDA_CHECK(cudaGraphLaunch(g_spB_[R], stream_));
             cur = tok_final;
             p += m + 1;
@@ -549,7 +594,7 @@ void mtp_decode_spec(int first, int start_pos, int n, const SpecSamplingParams& 
             mstats_.verify_ms += ms(t0, clk::now());
             t0 = clk::now();
             R = sp_pick_r(n - (int)out.size(), Rtop);
-            if (R) { sp_graphs(R, margin); QV_CUDA_CHECK(cudaGraphLaunch(g_spA_[R], stream_)); }
+            if (R) { sp_graphs(R, margin, sampled, dp); QV_CUDA_CHECK(cudaGraphLaunch(g_spA_[R], stream_)); }
         }
         QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
     }

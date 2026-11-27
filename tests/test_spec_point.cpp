@@ -1,11 +1,13 @@
 // CPU-only distribution test of the lossless speculative round with a deterministic (point-mass) drafter, qv::spec_round_point (the code the Inkling engine runs).
 // A synthetic order-1 language model (V tokens, context-dependent logits) is sampled through the real filter chain (build_dist_dense: top_k/top_p/min_p/temperature):
 // plain = sample_dist from the next-token distribution; spec = draft chain of imperfect greedy drafts (the drafter uses a perturbed model) + spec_round_point.
+// With the 6th argument "sample" the drafts are drawn from the drafter distribution (same filter chain) and the round is spec_round_q.
 // Two-sample chi-square homogeneity per position and for the position pairs. Usage: test_spec_point [DRAWS=2000000] [TOP_K=40] [TOP_P=0.95] [MIN_P=0.05] [TEMP=1.0]
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
+#include <string>
 #include <vector>
 
 #include "qv/spec_sampling.h"
@@ -44,6 +46,7 @@ int main(int argc, char** argv) {
     std::mt19937_64 g(12345);
     std::normal_distribution<float> nd(0.f, 2.0f), nz(0.f, 1.2f);
     for (int i = 0; i < V; ++i) for (int j = 0; j < V; ++j) { tab[i][j] = nd(g); tabd[i][j] = tab[i][j] + nz(g); }
+    const bool sampled = argc > 6 && std::string(argv[6]) == "sample";
     const int ND = 3, R = ND + 1;
     std::vector<std::map<long, long>> A(R), B(R);  // key = joint of the first (j+1) tokens (position 0..j): tests the joint prefix distribution
     std::mt19937_64 rs(1), rp(2);
@@ -52,6 +55,27 @@ int main(int argc, char** argv) {
         std::vector<float> lg;
         logits_of(prev, drafter, lg);
         qv::build_dist_dense(lg.data(), V, sp, d);
+    };
+
+    std::mt19937_64 rd(99);
+    auto draft_chain = [&](int first, int* drafts, qv::SpecDist* qd) {
+        int prev = first;
+        for (int j = 0; j < ND; ++j) {
+            if (!sampled) {
+                std::vector<float> lg; logits_of(prev, true, lg);
+                int best = 0; for (int i = 1; i < V; ++i) if (lg[i] > lg[best]) best = i;
+                drafts[j] = best;
+            } else {
+                dist_for(prev, true, qd[j]);
+                drafts[j] = qv::sample_dist(qd[j], rd);
+            }
+            prev = drafts[j];
+        }
+    };
+    auto do_round = [&](int cur, const int* drafts, const qv::SpecDist* qd, std::mt19937_64& rg, int* seq, int* nacc) {
+        auto pf = [&](int j, qv::SpecDist& d) { dist_for(j == 0 ? cur : drafts[j - 1], false, d); };
+        if (!sampled) return qv::spec_round_point(ND, drafts, pf, rg, seq, nacc);
+        return qv::spec_round_q(ND, drafts, pf, [&](int j, qv::SpecDist& q) { q = qd[j]; }, rg, seq, nacc);
     };
     for (long n = 0; n < draws; ++n) {
         const int first = (int)(n % 5);
@@ -68,19 +92,12 @@ int main(int argc, char** argv) {
                 prev = t;
             }
         }
-        // speculative: greedy drafts from the perturbed model (deterministic function of the context)
+        // speculative
         {
-            int drafts[ND], prev = first;
-            for (int j = 0; j < ND; ++j) {
-                std::vector<float> lg;
-                logits_of(prev, true, lg);
-                int best = 0;
-                for (int i = 1; i < V; ++i) if (lg[i] > lg[best]) best = i;
-                drafts[j] = best;
-                prev = best;
-            }
+            int drafts[ND]; qv::SpecDist qd[ND];
+            draft_chain(first, drafts, qd);
             int seq[R], nacc = 0;
-            const int m = qv::spec_round_point(ND, drafts, [&](int j, qv::SpecDist& d) { dist_for(j == 0 ? first : (j - 1 < ND ? drafts[j - 1] : 0), false, d); }, rs, seq, &nacc);
+            const int m = do_round(first, drafts, qd, rs, seq, &nacc);
             accepted += nacc; ++rounds;
             long key = 0;
             for (int j = 0; j <= m; ++j) { key = key * V + seq[j]; A[j][key]++; }
@@ -118,14 +135,10 @@ int main(int argc, char** argv) {
             for (int j = 0; j < NS; ++j) { qv::SpecDist d; dist_for(prev, false, d); prev = qv::sample_dist(d, r2); SB[j][prev]++; }
             int cur = first, produced = 0;
             while (produced < NS) {
-                int drafts[ND], pv2 = cur;
-                for (int j = 0; j < ND; ++j) {
-                    std::vector<float> lg; logits_of(pv2, true, lg);
-                    int best = 0; for (int i = 1; i < V; ++i) if (lg[i] > lg[best]) best = i;
-                    drafts[j] = best; pv2 = best;
-                }
+                int drafts[ND]; qv::SpecDist qd[ND];
+                draft_chain(cur, drafts, qd);
                 int seq[R];
-                const int m = qv::spec_round_point(ND, drafts, [&](int j, qv::SpecDist& d) { dist_for(j == 0 ? cur : drafts[j - 1], false, d); }, r1, seq);
+                const int m = do_round(cur, drafts, qd, r1, seq, nullptr);
                 for (int j = 0; j <= m && produced < NS; ++j) SA[produced++][seq[j]]++;
                 cur = seq[m];
             }

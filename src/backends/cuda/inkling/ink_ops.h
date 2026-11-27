@@ -209,6 +209,19 @@ void mk_step(const QMat& w1, const __half* wa, const float* ctxterm_j, const flo
              cudaStream_t s);
 // argmax over v = base[row] + bias + fold_bias; writes *tok (lowest index wins ties); scratch >= 2*ARGB floats/ints
 void add_argmax(const float* base, const float* bias, const float* fold_bias, int n, float* sv, int* si, int* tok, cudaStream_t s);
+// sampled draft (lossless speculative sampling): out[i] = cap * tanh((base + bias + fold_bias) / cap)
+void draft_logits(const float* base, const float* bias, const float* fold_bias, int n, float cap, float* out, cudaStream_t s);
+// sample a draft token from the filtered distribution of `logits` (top_k / top_p / min_p / temperature as in the request) with the seed read from *seed_ptr (device)
+// mixed with `step`; writes the distribution (up to 256 candidates, descending) to q_id/q_prob/q_cnt and the token to *tok. cand_* scratch: max_extract entries.
+struct DraftSampleParams {
+    float margin = 8.0f, temperature = 1.0f, top_p = 1.0f, min_p = 0.0f;
+    int top_k = 0, min_keep = 1, max_extract = 4096;
+    bool operator==(const DraftSampleParams& o) const {
+        return margin == o.margin && temperature == o.temperature && top_p == o.top_p && min_p == o.min_p && top_k == o.top_k && min_keep == o.min_keep && max_extract == o.max_extract;
+    }
+};
+void draft_sample(const float* logits, int n, const DraftSampleParams& p, const unsigned long long* seed_ptr, int step, int* cand_id, float* cand_val, void* cand_meta,
+                  int* q_id, float* q_prob, int* q_cnt, int* tok, cudaStream_t s);
 void accept_rows(const int* vtok, const int* vy, int R, int* st, int* gen, int* nacc_hist, cudaStream_t s);
 void advance_pos(int* st, cudaStream_t s);
 void embed_row(const float* x, float* dst, int n, cudaStream_t s);
