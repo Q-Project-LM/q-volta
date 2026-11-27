@@ -772,11 +772,12 @@ void attn_prep_rows(const PrepArgs& a, cudaStream_t s) { k_prep<<<dim3(NKV, 8, a
 __global__ void __launch_bounds__(128) k_attn_part(AttnArgs a) {
     __shared__ float gacc[16][3][HD];
     __shared__ float gm[16][3], gl[16][3];
-    const int g = blockIdx.x, sp = blockIdx.y, nsp = gridDim.y;
+    // grid (NKV * rows, nsplit): the rows of one (kv head, split) are ADJACENT blocks, so they run at the same time and read the same K/V chunk once from HBM
+    // (the other rows hit L2); with rows on the slowest grid axis every row streamed the whole cache from HBM again (MTP verify R=4: 4x, draft block: 8x).
+    const int g = blockIdx.x / a.rows, row = blockIdx.x % a.rows, sp = blockIdx.y, nsp = gridDim.y;
     const int tid = threadIdx.x, warp = tid >> 5, lane = tid & 31, grp = lane >> 3, sub = lane & 7;
     const int gi = warp * 4 + grp;
     const unsigned gmask = 0xFFu << (grp * 8);
-    const int row = blockIdx.z;
     const int pos0 = *a.pos, pos = pos0 + (a.bidir ? 7 : row);
     const int lo = a.window > 0 ? max(0, pos - a.window + 1) : 0;
     const int n = pos - lo + 1;
@@ -795,46 +796,8 @@ __global__ void __launch_bounds__(128) k_attn_part(AttnArgs a) {
     for (int hh = 0; hh < 3; ++hh)
 #pragma unroll
         for (int i = 0; i < 16; ++i) acc[hh][i] = 0.f;
-    for (int j = kb + gi; j < ke; j += 16) {
-        const int slot = a.ring ? (j & (a.cap - 1)) : j;
-        const bool tl = a.ktail && j >= pos0;
-        const size_t base = tl ? ((size_t)g * a.tail_rows + (j - pos0)) * HD + sub * 16 : ((size_t)g * a.cap + slot) * HD + sub * 16;
-        const __half* kcp = tl ? a.ktail : a.kc;
-        const __half* vcp = tl ? a.vtail : a.vc;
-        float kf[16], vf[16];
-        if (a.kq) {
-            const size_t r = (size_t)g * a.cap + slot;
-            const uint2 kb8 = __ldg(reinterpret_cast<const uint2*>(a.kq + r * 64) + sub);
-            const uint2 vb8 = __ldg(reinterpret_cast<const uint2*>(a.vq + r * 64) + sub);
-            const float2 ksc = __half22float2(a.ks[r * 2 + (sub >> 2)]), vsc = __half22float2(a.vs[r * 2 + (sub >> 2)]);
-            const uint32_t kw[2] = {kb8.x, kb8.y}, vw[2] = {vb8.x, vb8.y};
-#pragma unroll
-            for (int w = 0; w < 2; ++w)
-#pragma unroll
-                for (int i = 0; i < 8; ++i) {
-                    kf[w * 8 + i] = fmaf((float)((kw[w] >> (4 * i)) & 15u), ksc.x, ksc.y);
-                    vf[w * 8 + i] = fmaf((float)((vw[w] >> (4 * i)) & 15u), vsc.x, vsc.y);
-                }
-        } else {
-        const uint4 k0 = __ldg(reinterpret_cast<const uint4*>(kcp + base)), k1 = __ldg(reinterpret_cast<const uint4*>(kcp + base) + 1);
-        const uint4 v0 = __ldg(reinterpret_cast<const uint4*>(vcp + base)), v1 = __ldg(reinterpret_cast<const uint4*>(vcp + base) + 1);
-        {
-            const __half2* p0 = reinterpret_cast<const __half2*>(&k0);
-            const __half2* p1 = reinterpret_cast<const __half2*>(&k1);
-#pragma unroll
-            for (int i = 0; i < 4; ++i) {
-                const float2 f0 = __half22float2(p0[i]), f1 = __half22float2(p1[i]);
-                kf[2 * i] = f0.x; kf[2 * i + 1] = f0.y; kf[8 + 2 * i] = f1.x; kf[8 + 2 * i + 1] = f1.y;
-            }
-            const __half2* q0 = reinterpret_cast<const __half2*>(&v0);
-            const __half2* q1 = reinterpret_cast<const __half2*>(&v1);
-#pragma unroll
-            for (int i = 0; i < 4; ++i) {
-                const float2 f0 = __half22float2(q0[i]), f1 = __half22float2(q1[i]);
-                vf[2 * i] = f0.x; vf[2 * i + 1] = f0.y; vf[8 + 2 * i] = f1.x; vf[8 + 2 * i + 1] = f1.y;
-            }
-        }
-        }
+    // score + online-softmax update of one key (kf / vf: this lane's 16 dims); identical arithmetic for the fp16 and the int4 loader
+    auto consume = [&](const float (&kf)[16], const float (&vf)[16], int j) {
         float s[3];
 #pragma unroll
         for (int hh = 0; hh < 3; ++hh) {
@@ -856,6 +819,72 @@ __global__ void __launch_bounds__(128) k_attn_part(AttnArgs a) {
 #pragma unroll
             for (int i = 0; i < 16; ++i) acc[hh][i] = fmaf(p, vf[i], acc[hh][i] * corr);
         }
+    };
+    if (a.kq) {
+        // int4 KV: the raw nibbles / scales of PF keys are loaded before the first of them is consumed (software pipeline: more bytes in flight
+        // per warp, the per-key arithmetic and its order are unchanged -> bit-identical to the non-pipelined loop)
+        constexpr int PF = 1;  // 1 key ahead; deeper prefetch raises registers above 168 (2 blocks/SM) or spills and is slower (microbench, tests/bench_attn_long.cu)
+        struct Raw { uint2 k, v; __half2 ks[2], vs[2]; };
+        auto ld = [&](int j, Raw& r) {
+            const size_t ri = (size_t)g * a.cap + j;
+            r.k = __ldg(reinterpret_cast<const uint2*>(a.kq + ri * 64) + sub);
+            r.v = __ldg(reinterpret_cast<const uint2*>(a.vq + ri * 64) + sub);
+            const int si = sub >> 2;
+            r.ks[0] = a.ks[ri * 2 + si]; r.vs[0] = a.vs[ri * 2 + si];
+        };
+        Raw rw[PF];
+        int jj = kb + gi;
+#pragma unroll
+        for (int u = 0; u < PF; ++u) if (jj + 16 * u < ke) ld(jj + 16 * u, rw[u]);
+        for (; jj < ke; jj += 16 * PF) {
+#pragma unroll
+            for (int u = 0; u < PF; ++u) {
+                const int j = jj + 16 * u;
+                if (j < ke) {
+                    float kf[16], vf[16];
+                    const float2 ksc = __half22float2(rw[u].ks[0]), vsc = __half22float2(rw[u].vs[0]);
+                    const uint32_t kw[2] = {rw[u].k.x, rw[u].k.y}, vw[2] = {rw[u].v.x, rw[u].v.y};
+#pragma unroll
+                    for (int w = 0; w < 2; ++w)
+#pragma unroll
+                        for (int i = 0; i < 8; ++i) {
+                            kf[w * 8 + i] = fmaf((float)((kw[w] >> (4 * i)) & 15u), ksc.x, ksc.y);
+                            vf[w * 8 + i] = fmaf((float)((vw[w] >> (4 * i)) & 15u), vsc.x, vsc.y);
+                        }
+                    if (j + 16 * PF < ke) ld(j + 16 * PF, rw[u]);  // refill this slot for the next round
+                    consume(kf, vf, j);
+                }
+            }
+        }
+    } else
+    for (int j = kb + gi; j < ke; j += 16) {
+        const int slot = a.ring ? (j & (a.cap - 1)) : j;
+        const bool tl = a.ktail && j >= pos0;
+        const size_t base = tl ? ((size_t)g * a.tail_rows + (j - pos0)) * HD + sub * 16 : ((size_t)g * a.cap + slot) * HD + sub * 16;
+        const __half* kcp = tl ? a.ktail : a.kc;
+        const __half* vcp = tl ? a.vtail : a.vc;
+        float kf[16], vf[16];
+        {
+        const uint4 k0 = __ldg(reinterpret_cast<const uint4*>(kcp + base)), k1 = __ldg(reinterpret_cast<const uint4*>(kcp + base) + 1);
+        const uint4 v0 = __ldg(reinterpret_cast<const uint4*>(vcp + base)), v1 = __ldg(reinterpret_cast<const uint4*>(vcp + base) + 1);
+        {
+            const __half2* p0 = reinterpret_cast<const __half2*>(&k0);
+            const __half2* p1 = reinterpret_cast<const __half2*>(&k1);
+#pragma unroll
+            for (int i = 0; i < 4; ++i) {
+                const float2 f0 = __half22float2(p0[i]), f1 = __half22float2(p1[i]);
+                kf[2 * i] = f0.x; kf[2 * i + 1] = f0.y; kf[8 + 2 * i] = f1.x; kf[8 + 2 * i + 1] = f1.y;
+            }
+            const __half2* q0 = reinterpret_cast<const __half2*>(&v0);
+            const __half2* q1 = reinterpret_cast<const __half2*>(&v1);
+#pragma unroll
+            for (int i = 0; i < 4; ++i) {
+                const float2 f0 = __half22float2(q0[i]), f1 = __half22float2(q1[i]);
+                vf[2 * i] = f0.x; vf[2 * i + 1] = f0.y; vf[8 + 2 * i] = f1.x; vf[8 + 2 * i + 1] = f1.y;
+            }
+        }
+        }
+        consume(kf, vf, j);
     }
 #pragma unroll
     for (int hh = 0; hh < 3; ++hh) {
@@ -879,7 +908,7 @@ __global__ void __launch_bounds__(128) k_attn_part(AttnArgs a) {
     }
 }
 void attn_part(const AttnArgs& a, cudaStream_t s) { k_attn_part<<<dim3(NKV, a.nsplit, 1), 128, 0, s>>>(a); }
-void attn_part_rows(const AttnArgs& a, cudaStream_t s) { k_attn_part<<<dim3(NKV, a.nsplit, a.rows), 128, 0, s>>>(a); }
+void attn_part_rows(const AttnArgs& a, cudaStream_t s) { k_attn_part<<<dim3(NKV * a.rows, a.nsplit, 1), 128, 0, s>>>(a); }
 
 // merge split partials + sink logit (value 0), multiply by sigmoid(gate), quantize to int8 for wo. grid 24 heads, 128 threads
 __global__ void __launch_bounds__(128) k_attn_combine(AttnArgs a) {
