@@ -824,16 +824,24 @@ GenResult App::generate(Task& t, const std::function<bool()>& alive, const std::
         const int ckpt_min_prompt = std::max(kCkptTail + 1, o.checkpoint_min_tokens);
         size_t prev_ck_len = 0;
         for (const auto& c : ckpts_) prev_ck_len = std::max(prev_ck_len, c.tokens.size());
+        // Chunk grid: batched prefill numerics depend on the chunk boundaries (keys of earlier chunks are read from the int4 cache, keys inside a chunk
+        // are exact fp16), so a restored checkpoint reproduces an uncached run bit for bit only if the checkpoint sits on the chunk grid and the rest of
+        // the prompt continues on that grid. --checkpoint-align (default: the prefill chunk) cuts checkpoints on multiples of it; the cost is that up to
+        // one grid step of the prompt tail is prefilled again on the next turn.
+        const int align_g = o.checkpoint_align < 0 ? chunk : o.checkpoint_align;
+        size_t cut_tgt = (size_t)std::max(0, N - kCkptTail);
+        if (align_g > 0) cut_tgt = cut_tgt / (size_t)align_g * (size_t)align_g;
         const bool want_ckpt = t.cache_prompt && t.images.empty() && eng->has_checkpoint() &&
-                               N >= ckpt_min_prompt && (size_t)(N - kCkptTail) > start &&
-                               (prev_ck_len == 0 || (size_t)(N - kCkptTail) >= prev_ck_len + kCkptMinDelta);
-        const size_t ckpt_cut = want_ckpt ? (size_t)(N - kCkptTail) : 0;
+                               N >= ckpt_min_prompt && cut_tgt > start && cut_tgt > 0 &&
+                               (prev_ck_len == 0 || cut_tgt >= prev_ck_len + (align_g > 0 ? (size_t)1 : kCkptMinDelta));
+        const size_t ckpt_cut = want_ckpt ? cut_tgt : 0;
         bool ckpt_done = !want_ckpt;
         for (size_t off = start; off < (size_t)N;) {
             if (!alive()) { r.aborted = true; return r; }
             // prefill budget per engine turn: with other slots running, smaller chunks so their decode steps are not stalled for long
             const int ch = (multi_seq && n_busy_ > 1) ? std::min(chunk, std::max(1, shared_chunk)) : chunk;
             int n = (int)std::min<size_t>(ch, N - off);
+            if (align_g > 0) n = std::min(n, align_g - (int)(off % (size_t)align_g));  // keep every chunk boundary on the grid (the first chunk after a restore may be short)
             if (!ckpt_done && off < ckpt_cut && off + (size_t)n > ckpt_cut) n = (int)(ckpt_cut - off);
             { EngOp op(*this, sid);
               if (t.images.empty()) eng->prefill(t.prompt.data() + off, n, (int)off);

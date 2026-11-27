@@ -55,6 +55,7 @@ struct Options {
     bool cache_prompt = true;
     int checkpoint_slots = 4;          // --checkpoint-slots N: L2 host-RAM parked context slots (0 disables L2 pool)
     int checkpoint_ram_mb = 8192;      // --checkpoint-ram-mb MB: max total RAM for L2 checkpoint pool (0 disables L2 pool)
+    int checkpoint_align = -1;         // --checkpoint-align N: prefix checkpoints are cut on multiples of N tokens and prompt chunks follow that grid (-1: the prefill chunk, 0: off)
     int checkpoint_min_tokens = 4096;  // --checkpoint-min-tokens N: min context tokens to activate L1/L2 checkpoints
     bool metrics = false, slots = true, props = false, embedding = false;
     std::string slot_save_path;

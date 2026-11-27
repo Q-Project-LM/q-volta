@@ -37,7 +37,7 @@ const OwnFlag kOwn[] = {
     {"--default-max-tokens", "predict", 1}, {"--quiet", "log-disable", 0}, {"--mock-text", "mock-text", 1},
     {"--mock-loop", "mock-loop", 0}, {"--vision-file", "vision-file", 1}, {"--allow-remote-images", "allow-remote-images", 0}, {"--image-root", "image-root", 1},
     {"--image-max-side", "image-max-side", 1}, {"--image-token", "image-token", 1}, {"--mlock", "mlock", 0}, {"--no-mlock", "no-mlock", 0}, {"--mmap", "mmap", 0}, {"--no-mmap", "no-mmap", 0}, {"--mock-delay-us", "mock-delay-us", 1},
-    {"--checkpoint-slots", "checkpoint-slots", 1}, {"--checkpoint-ram-mb", "checkpoint-ram-mb", 1}, {"--checkpoint-min-tokens", "checkpoint-min-tokens", 1},
+    {"--checkpoint-slots", "checkpoint-slots", 1}, {"--checkpoint-ram-mb", "checkpoint-ram-mb", 1}, {"--checkpoint-min-tokens", "checkpoint-min-tokens", 1}, {"--checkpoint-align", "checkpoint-align", 1},
 };
 
 bool truthy(const std::string& v) { return v == "1" || v == "on" || v == "enabled" || v == "true" || v == "yes"; }
@@ -99,7 +99,7 @@ const std::set<std::string>& handled() {
         "dynatemp-range", "dynatemp-exp", "seed", "samplers", "ignore-eos", "logit-bias", "timeout", "path", "ui", "log-disable", "verbose", "log-verbosity",
         "slot-save-path", "special", "cors-origins", "cors-methods", "cors-headers", "cors-credentials", "api-prefix", "min-keep", "grammar", "grammar-file", "json-schema", "json-schema-file", "help", "version",
         "backend", "kv", "kv4-kmode", "mtp", "no-mtp", "mtp-grammar", "no-mtp-grammar", "mtp-depth", "mtp-file", "prefill-chunk", "tokenizer", "no-embedded-defaults", "max-queue", "mock-text", "mock-loop", "mock-delay-us",
-        "checkpoint-slots", "checkpoint-ram-mb", "checkpoint-min-tokens",
+        "checkpoint-slots", "checkpoint-ram-mb", "checkpoint-min-tokens", "checkpoint-align",
         "reasoning-preserve", "context-shift", "warmup", "flash-attn", "mlock", "mmap", "no-mmap", "perf", "escape", "verbosity", "log-colors", "log-timestamps",
         "log-prefix", "kv-unified", "cache-idle-slots", "lora", "lora-scaled", "ssl-key-file", "ssl-cert-file", "hf-repo", "model-url", "docker-repo",
         "hf-file", "hf-token", "offline", "no-mlock", "vision-file", "allow-remote-images", "image-root", "image-max-side", "image-token",
@@ -232,6 +232,7 @@ void apply(Options& o, const Resolved& r, const std::string& flag, const std::st
     else if (c == "mock-delay-us") o.mock_delay_us = to_int(val, flag);
     else if (c == "checkpoint-slots") o.checkpoint_slots = std::max(0, to_int(val, flag));
     else if (c == "checkpoint-ram-mb") o.checkpoint_ram_mb = std::max(0, to_int(val, flag));
+    else if (c == "checkpoint-align") o.checkpoint_align = to_int(val, flag);
     else if (c == "checkpoint-min-tokens") o.checkpoint_min_tokens = std::max(0, to_int(val, flag));
     else if (c == "lora" || c == "lora-scaled") fail("LoRA adapters are not applied at runtime by qv_server: merge the adapter at conversion time (tools/convert.py --lora DIR); refusing to start with " + flag);
     else if (c == "ssl-key-file" || c == "ssl-cert-file") fail("the server is built without SSL support (" + flag + ")");
