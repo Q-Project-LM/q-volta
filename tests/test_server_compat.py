@@ -795,7 +795,7 @@ def test_mtp_speculative_temp_gt_zero():
 
     # 2. Lazy grammar tools with temperature > 0: speculative MTP until trigger, then rollback + grammar mask
     mid_txt = "Checking weather in Paris now.\n<tool_call>INVALID GARBAGE"
-    b = Srv(qv_cmd("--mock-text", mid_txt, "--mtp"), env={"QV_MTP_DEBUG": "1"}, name="spec_tools")
+    b = Srv(qv_cmd("--mock-text", mid_txt, "--mtp", "--mtp-grammar"), env={"QV_MTP_DEBUG": "1"}, name="spec_tools")
     try:
         req_body = {"messages": [{"role": "user", "content": "weather in Paris?"}], "max_tokens": 200,
                     "temperature": 0.7, "top_k": 20, "top_p": 0.95, "min_p": 0.05, "seed": 123,
@@ -805,7 +805,7 @@ def test_mtp_speculative_temp_gt_zero():
         assert r["message"]["tool_calls"][0]["function"]["name"] == "get_weather"
         assert isinstance(json.loads(r["message"]["tool_calls"][0]["function"]["arguments"]), dict)
         log_b = read_log(b)
-        assert "use_chunk=1 (mtp=1 argmax_ok=0 spec_ok=1 constrained=1 lazy=1" in log_b
+        assert "use_chunk=1 (mtp=1 argmax_ok=0 spec_ok=1 mtp_gram=1 constrained=1 lazy=1" in log_b
         assert "lazy grammar triggered" in log_b
     finally:
         b.stop()
@@ -849,7 +849,7 @@ def test_mtp_grammar_enabled(tmp_path):
     # 2. Auto tools via presets.ini (mtp-grammar = true): no rollback when <tool_call> triggers
     mid_txt = "Sure, let me check the weather for you.\n<tool_call>INVALID GARBAGE"
     ini = tmp_path / "presets.ini"
-    ini.write_text(f"[*]\nbackend = mock\nspec = mtp\nmtp-grammar = true\n[test-model]\nmock-text = {json.dumps(mid_txt)}\n", encoding="utf-8")
+    ini.write_text(f"[*]\nbackend = mock\ntokenizer = {TOKJSON}\nspec = mtp\nmtp-grammar = true\n[test-model]\nmodel = dummy.qv\nmock-text = {json.dumps(mid_txt)}\n", encoding="utf-8")
     p = Srv([QV_SERVER, "--models-preset", str(ini), "--tokenizer", TOKJSON, "--port", "@PORT@", "-c", "16384"],
             env={"QV_MTP_DEBUG": "1"}, name="mg_preset")
     try:
