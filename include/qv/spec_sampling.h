@@ -472,4 +472,29 @@ inline int sample_residual(const SpecDist& p, const SpecDist& q, std::mt19937_64
     return diffs.back().first;
 }
 
+
+// One verify round with a deterministic drafter (proposal q = point mass at drafts[j]). `dist_of(j, SpecDist&)` supplies the target distribution of row j
+// (rows 0..nd; row j is the distribution of the token that follows drafts[0..j-1]). Draft j is accepted with probability p_j(drafts[j]); on rejection the
+// token is drawn from p_j with the draft removed (the residual max(0, p - q) / norm for a point-mass q). If all nd drafts are accepted, a bonus token is drawn from
+// row nd. Writes seq[0..m] (m accepted drafts + one more token), returns m. Lossless: the output sequence has exactly the target distribution.
+template <class DistFn>
+inline int spec_round_point(int nd, const int* drafts, DistFn&& dist_of, std::mt19937_64& rng, int* seq, int* n_acc = nullptr) {
+    int acc = 0;
+    for (int j = 0; j <= nd; ++j) {
+        SpecDist pj;
+        dist_of(j, pj);
+        if (j < nd) {
+            SpecDist q;
+            q.sp.assign(1, {drafts[j], 1.0f});
+            if (spec_accept(pj, q, drafts[j], rng)) { seq[j] = drafts[j]; acc = j + 1; continue; }
+            seq[j] = sample_residual(pj, q, rng);
+        } else {
+            seq[j] = sample_dist(pj, rng);
+        }
+        if (n_acc) *n_acc = acc;
+        return j;
+    }
+    return nd;  // unreachable
+}
+
 }  // namespace qv
