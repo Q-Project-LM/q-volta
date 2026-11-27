@@ -34,6 +34,7 @@ static double now() { return std::chrono::duration<double>(std::chrono::steady_c
 int main(int argc, char** argv) {
     std::string model, ids_path, dump, ctxs = "128,512,2048";
     bool nll = false;
+    std::string nll_out;
     bool bench = false;
     int gen = 0, n = 64, threads = 32, chunk = 256, max_ctx = 0;
     for (int i = 1; i < argc; ++i) {
@@ -45,6 +46,7 @@ int main(int argc, char** argv) {
         else if (a == "--gen") gen = std::stoi(next());
         else if (a == "--bench") bench = true;
         else if (a == "--nll") nll = true;
+        else if (a == "--nll-out") nll_out = next();  // per-position NLL of ids[pos+1] (float32, one value per predicted token), for loop/long-context studies
         else if (a == "--ctx") ctxs = next();
         else if (a == "--n") n = std::stoi(next());
         else if (a == "--threads") threads = std::stoi(next());
@@ -64,6 +66,7 @@ int main(int argc, char** argv) {
         opt.max_ctx = max_ctx ? max_ctx : (bench ? *std::max_element(cl.begin(), cl.end()) + n + 8 : (int)ids.size() + gen + 8);
         double t0 = now();
         double nll_sum = 0; long nll_n = 0;
+        std::vector<float> nll_pos;
         if (nll) {
             opt.row_logits = [&](int pos, const float* lg) {
                 if (pos + 1 >= (int)ids.size()) return;
@@ -71,7 +74,9 @@ int main(int argc, char** argv) {
                 for (int i = 1; i < 200058; ++i) m = std::max(m, lg[i]);
                 double z = 0;
                 for (int i = 0; i < 200058; ++i) z += std::exp((double)lg[i] - m);
-                nll_sum += -((double)lg[ids[pos + 1]] - m - std::log(z));
+                const double nl = -((double)lg[ids[pos + 1]] - m - std::log(z));
+                nll_sum += nl;
+                if (!nll_out.empty()) { if ((int)nll_pos.size() <= pos) nll_pos.resize(pos + 1, 0.f); nll_pos[pos] = (float)nl; }
                 nll_n++;
             };
         }
@@ -85,6 +90,7 @@ int main(int argc, char** argv) {
         if (nll) {
             t0 = now();
             eng->prefill(ids.data(), (int)ids.size(), 0);
+            if (!nll_out.empty()) { std::ofstream o(nll_out, std::ios::binary); o.write((const char*)nll_pos.data(), nll_pos.size() * 4); }
             std::printf("{\"nll\": %.5f, \"n\": %ld, \"seconds\": %.1f}\n", nll_sum / nll_n, nll_n, now() - t0);
             return 0;
         }
