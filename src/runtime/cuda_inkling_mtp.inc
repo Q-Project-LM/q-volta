@@ -470,19 +470,19 @@ void sp_tail_sync(int rows) {  // after the stream sync: fetch the candidates be
     }
     if (any) QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
 }
-void sp_build_row(const float* dlog, int row, float margin, const SpecSamplingParams& sp, SpecDist& out) {
+void sp_build_row(const float* dlog, int row, float margin, const SpecSamplingParams& sp, SpecDist& out, TokenConstraint* tc = nullptr) {
     const int N = cfg_.ink.unpadded_vocab;
     bool ok = false;
     if (margin >= 0.0f) {
         const ik_CandMeta& md = h_smeta_[row];
         ok = md.count > 0 && md.count <= SP_MAXC &&
-             build_dist_from_candidates(h_scid_ + (size_t)row * SP_MAXC, h_scval_ + (size_t)row * SP_MAXC, md.count, md.mx, (double)md.sum_exp, sp, out, nullptr, margin);
+             build_dist_from_candidates(h_scid_ + (size_t)row * SP_MAXC, h_scval_ + (size_t)row * SP_MAXC, md.count, md.mx, (double)md.sum_exp, sp, out, tc, margin);
     }
     if (!ok) {
         if ((int)h_sfull_.size() < N) h_sfull_.resize(N);
         QV_CUDA_CHECK(cudaMemcpyAsync(h_sfull_.data(), dlog + (size_t)row * N, (size_t)N * 4, cudaMemcpyDeviceToHost, stream_));
         QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
-        build_dist_dense(h_sfull_.data(), N, sp, out);
+        build_dist_dense(h_sfull_.data(), N, sp, out, tc);
     }
 }
 void sp_cycleA(int R, float margin, bool sampled) {
@@ -537,7 +537,32 @@ static int sp_pick_r(int rem, int rmax) {
     const int r = std::min(rem, rmax);
     return r >= 8 ? 8 : r >= 4 ? 4 : r >= 2 ? r : 0;
 }
-void mtp_decode_spec(int first, int start_pos, int n, const SpecSamplingParams& sp, std::vector<int>& out) {
+// Adaptive width (p29 S3): per-position conditional acceptance EMA, cost model from the QV_MTP_PROF numbers at short context (ms): plain sampled step, draft block, verify R.
+float sp_ema_[8] = {0.55f, 0.55f, 0.55f, 0.55f, 0.55f, 0.55f, 0.55f, 0.55f};
+int sp_plain_run_ = 0;
+int sp_policy(int rem, int rmax) {
+    static const int adapt = std::getenv("QV_SPEC_ADAPT") ? std::atoi(std::getenv("QV_SPEC_ADAPT")) : 1;
+    if (!adapt) return sp_pick_r(rem, rmax);
+    const int cap = sp_pick_r(rem, rmax);
+    if (cap < 2) return 0;
+    if (sp_plain_run_ >= 12) return cap > 4 ? 4 : cap;  // exploration: refresh the acceptance estimate every 12 plain tokens
+    static const float verify_ms[9] = {0, 0, 12.6f, 14.5f, 17.1f, 0, 0, 0, 26.7f};
+    float best = 1.0f / 7.7f;  // tokens per ms of a plain sampled step
+    int best_r = 0;
+    for (int R : {2, 3, 4, 8}) {
+        if (R > cap) continue;
+        float e = 1.0f, pr = 1.0f;
+        for (int j = 0; j < R - 1; ++j) { pr *= sp_ema_[j]; e += pr; }
+        const float cost = 2.2f + 0.17f * (R - 1) + verify_ms[R] + 0.35f;
+        if (e / cost > best) { best = e / cost; best_r = R; }
+    }
+    return best_r;
+}
+void sp_update_ema(int R, int n_acc) {
+    const int tested = std::min(n_acc + 1, R - 1);
+    for (int j = 0; j < tested; ++j) sp_ema_[j] = 0.85f * sp_ema_[j] + 0.15f * (j < n_acc ? 1.0f : 0.0f);
+}
+void mtp_decode_spec(int first, int start_pos, int n, const SpecSamplingParams& sp, std::vector<int>& out, TokenConstraint* tc = nullptr) {
     const int Rmax = std::min(8, std::max(2, opt_.mtp_depth + 1));
     const int Rtop = Rmax <= 2 ? 2 : Rmax == 3 ? 3 : Rmax <= 4 ? 4 : 8;
     const float margin = spec_candidate_margin(sp);
@@ -554,67 +579,117 @@ void mtp_decode_spec(int first, int start_pos, int n, const SpecSamplingParams& 
     out.clear();
     out.reserve(n);
     int cur = first, p = start_pos;
-    int R = sp_pick_r(n, Rtop);
-    if (R) {
-        sp_graphs(R, margin, sampled, dp);
-        h_sst_[0] = cur; h_sst_[1] = p; h_sst_[2] = 0;
-        { const unsigned long long sd = rng(); std::memcpy(h_sst_ + 6, &sd, 8); }
-        QV_CUDA_CHECK(cudaMemcpyAsync(vst_, h_sst_, 32, cudaMemcpyHostToDevice, stream_));
-        QV_CUDA_CHECK(cudaStreamSynchronize(stream_));  // h_sst_ is reused below
-        auto t0 = clk::now();
-        QV_CUDA_CHECK(cudaGraphLaunch(g_spA_[R], stream_));
-        while (R) {
-            QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
-            sp_tail_sync(R);
-            int drafts[8];
-            for (int j = 0; j < R - 1; ++j) drafts[j] = h_svtok_[j + 1];
-            int n_acc = 0;
-            int seq[8];
-            int m;
-            if (!sampled) {
-                m = spec_round_point(R - 1, drafts, [&](int j, SpecDist& d) { sp_build_row(logitsv_, j, margin, sp, d); }, rng, seq, &n_acc);
-            } else {
-                m = spec_round_q(R - 1, drafts, [&](int j, SpecDist& d) { sp_build_row(logitsv_, j, margin, sp, d); },
-                                 [&](int j, SpecDist& q) {
-                                     const int qc = std::clamp(h_dq_cnt_[j], 0, 256);
-                                     q.dense = false; q.dn.clear(); q.sp.resize((size_t)qc);
-                                     for (int i = 0; i < qc; ++i) q.sp[(size_t)i] = {h_dq_id_[j * 256 + i], h_dq_prob_[j * 256 + i]};
-                                     std::sort(q.sp.begin(), q.sp.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
-                                 }, rng, seq, &n_acc);
-            }
-            const int tok_final = seq[m];
-            for (int j = 0; j <= m; ++j) out.push_back(seq[j]);
-            h_sst_[0] = tok_final; h_sst_[1] = p; h_sst_[2] = m + 1;
-            { const unsigned long long sd = rng(); std::memcpy(h_sst_ + 6, &sd, 8); }
-            QV_CUDA_CHECK(cudaMemcpyAsync(vst_, h_sst_, 32, cudaMemcpyHostToDevice, stream_));
-            QV_CUDA_CHECK(cudaGraphLaunch(g_spB_[R], stream_));
-            cur = tok_final;
-            p += m + 1;
-            mstats_.cycles += 1; mstats_.drafted += R - 1; mstats_.accepted += n_acc;
-            mstats_.verify_ms += ms(t0, clk::now());
-            t0 = clk::now();
-            R = sp_pick_r(n - (int)out.size(), Rtop);
-            if (R) { sp_graphs(R, margin, sampled, dp); QV_CUDA_CHECK(cudaGraphLaunch(g_spA_[R], stream_)); }
-        }
-        QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
-    }
-    // tail (at most one token): a plain step sampled on the host (state equals plain decode: all but the last output processed)
+    bool a_inflight = false, st_valid = false;
+    int R_inflight = 0;
     auto t0 = clk::now();
     while ((int)out.size() < n) {
-        mtp_plain_step(cur, p);
-        if (margin >= 0.0f) {
-            sp_extract_async(logits_, 1, margin);
-            QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
-            sp_tail_sync(1);
+        const int R = a_inflight ? R_inflight : sp_policy(n - (int)out.size(), Rtop);
+        if (R == 0) {
+            // plain step sampled on the host from GPU-extracted candidates (state equals plain decode: all but the last output processed)
+            const auto tp0 = clk::now();
+            mtp_plain_step(cur, p);
+            if (margin >= 0.0f) {
+                sp_extract_async(logits_, 1, margin);
+                QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
+                sp_tail_sync(1);
+            }
+            SpecDist pj;
+            sp_build_row(logits_, 0, margin, sp, pj, tc);
+            cur = sample_dist(pj, rng);
+            out.push_back(cur);
+            ++p;
+            ++sp_plain_run_;
+            st_valid = false;
+            mstats_.plain_steps += 1;
+            mstats_.plain_ms += ms(tp0, clk::now());
+            if (tc) { (void)tc->try_accept(cur); if (tc->is_eog(cur) || tc->is_dead()) return; }
+            continue;
         }
-        SpecDist pj;
-        sp_build_row(logits_, 0, margin, sp, pj);
-        cur = sample_dist(pj, rng);
-        out.push_back(cur);
-        ++p;
-        mstats_.plain_steps += 1;
+        sp_plain_run_ = 0;
+        sp_graphs(R, margin, sampled, dp);
+        if (!st_valid) {
+            h_sst_[0] = cur; h_sst_[1] = p; h_sst_[2] = 0;
+            { const unsigned long long sd = rng(); std::memcpy(h_sst_ + 6, &sd, 8); }
+            QV_CUDA_CHECK(cudaMemcpyAsync(vst_, h_sst_, 32, cudaMemcpyHostToDevice, stream_));
+            QV_CUDA_CHECK(cudaStreamSynchronize(stream_));  // h_sst_ is reused below
+            st_valid = true;
+            a_inflight = false;
+        }
+        if (!a_inflight) { t0 = clk::now(); QV_CUDA_CHECK(cudaGraphLaunch(g_spA_[R], stream_)); }
+        a_inflight = false;
+        QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
+        sp_tail_sync(R);
+        int drafts[8];
+        for (int j = 0; j < R - 1; ++j) drafts[j] = h_svtok_[j + 1];
+        int n_acc = 0;
+        int seq[8];
+        int m;
+        bool stop = false;
+        if (tc) {  // constrained decoding (grammar): sequential rounds, the constraint advances with every accepted token
+            m = 0;
+            for (int j = 0; j < R; ++j) {
+                SpecDist pj;
+                sp_build_row(logitsv_, j, margin, sp, pj, tc);
+                int tok_j;
+                bool acc = false;
+                if (j < R - 1) {
+                    SpecDist q;
+                    if (!sampled) {
+                        q.sp.assign(1, {drafts[j], 1.0f});
+                    } else {
+                        const int qc = std::clamp(h_dq_cnt_[j], 0, 256);
+                        q.sp.resize((size_t)qc);
+                        for (int i = 0; i < qc; ++i) q.sp[(size_t)i] = {h_dq_id_[j * 256 + i], h_dq_prob_[j * 256 + i]};
+                        std::sort(q.sp.begin(), q.sp.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+                    }
+                    acc = spec_accept(pj, q, drafts[j], rng);
+                    tok_j = acc ? drafts[j] : sample_residual(pj, q, rng);
+                } else {
+                    tok_j = sample_dist(pj, rng);
+                }
+                seq[j] = tok_j;
+                (void)tc->try_accept(tok_j);
+                if (acc) n_acc = j + 1;
+                m = j;
+                if (tc->is_eog(tok_j) || tc->is_dead()) { stop = true; break; }
+                if (!acc) break;
+            }
+        } else if (!sampled) {
+            m = spec_round_point(R - 1, drafts, [&](int j, SpecDist& d) { sp_build_row(logitsv_, j, margin, sp, d); }, rng, seq, &n_acc);
+        } else {
+            m = spec_round_q(R - 1, drafts, [&](int j, SpecDist& d) { sp_build_row(logitsv_, j, margin, sp, d); },
+                             [&](int j, SpecDist& q) {
+                                 const int qc = std::clamp(h_dq_cnt_[j], 0, 256);
+                                 q.dense = false; q.dn.clear(); q.sp.resize((size_t)qc);
+                                 for (int i = 0; i < qc; ++i) q.sp[(size_t)i] = {h_dq_id_[j * 256 + i], h_dq_prob_[j * 256 + i]};
+                                 std::sort(q.sp.begin(), q.sp.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+                             }, rng, seq, &n_acc);
+        }
+        const int tok_final = seq[m];
+        for (int j = 0; j <= m; ++j) out.push_back(seq[j]);
+        h_sst_[0] = tok_final; h_sst_[1] = p; h_sst_[2] = m + 1;
+        { const unsigned long long sd = rng(); std::memcpy(h_sst_ + 6, &sd, 8); }
+        QV_CUDA_CHECK(cudaMemcpyAsync(vst_, h_sst_, 32, cudaMemcpyHostToDevice, stream_));
+        QV_CUDA_CHECK(cudaGraphLaunch(g_spB_[R], stream_));
+        cur = tok_final;
+        p += m + 1;
+        mstats_.cycles += 1; mstats_.drafted += R - 1; mstats_.accepted += n_acc;
+        mstats_.verify_ms += ms(t0, clk::now());
+        sp_update_ema(R, n_acc);
+        if (stop) { QV_CUDA_CHECK(cudaStreamSynchronize(stream_)); return; }
+        // queue the next cycle before the host waits again when it will be a speculative one of the same state chain
+        const int Rn = sp_policy(n - (int)out.size(), Rtop);
+        if (Rn) {
+            sp_graphs(Rn, margin, sampled, dp);
+            t0 = clk::now();
+            QV_CUDA_CHECK(cudaGraphLaunch(g_spA_[Rn], stream_));
+            a_inflight = true;
+            R_inflight = Rn;
+        } else {
+            st_valid = false;
+        }
     }
-    mstats_.plain_ms += ms(t0, clk::now());
+    QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
 }
 
 // plain steps for the tail (and for tests): same state as the speculative path (features -> drafter context)

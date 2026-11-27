@@ -39,6 +39,16 @@ static double gamma_q(double a, double x) {
     }
     return std::exp(-x + a * std::log(x) - gln) * h;
 }
+// toy constraint: only even token ids are allowed; the 11th accepted token is an "end of generation"
+struct EvenConstraint : qv::TokenConstraint {
+    int accepted = 0;
+    bool awaiting() const override { return false; }
+    bool is_dead() const override { return false; }
+    bool is_eog(int) const override { return false; }
+    bool probe_allowed(int tok) const override { return tok % 2 == 0; }
+    bool try_accept(int tok) override { if (tok % 2) return false; ++accepted; return true; }
+    void mask_logits(float* l, size_t n) override { for (size_t i = 1; i < n; i += 2) l[i] = -INFINITY; }
+};
 int main(int argc, char** argv) {
     if (argc < 9 || !std::ifstream(argv[1])) { std::printf("test_ink_spec: no model, skipped\n"); return 0; }
     const int depth = std::atoi(argv[3]);
@@ -71,6 +81,41 @@ int main(int argc, char** argv) {
         run(false, a, la); run(true, b, lb);
         const bool ok = a == b && la == lb;
         std::printf("greedy equality (T=0, %d tokens): ids %d logits %d\n", n, (int)(a == b), (int)(la == lb));
+        if (!ok) ++fail;
+    }
+    // 1a. constrained greedy (grammar path): masked argmax per token, equal to plain stepping with a host-side mask; state equality after the run
+    {
+        const int n = 30;
+        eng->reset();
+        eng->set_mtp_enabled(false);
+        eng->prefill(prompt.data(), L, 0);
+        std::vector<float> lg;
+        eng->logits(lg);
+        int tok0 = 0;
+        { float b = -INFINITY; for (size_t i = 0; i < lg.size(); i += 2) if (lg[i] > b) { b = lg[i]; tok0 = (int)i; } }
+        std::vector<int> ref{tok0};
+        for (int j = 0; j < n; ++j) {
+            eng->step(ref.back(), L + j);
+            eng->logits(lg);
+            int t = 0; float b = -INFINITY;
+            for (size_t i = 0; i < lg.size(); i += 2) if (lg[i] > b) { b = lg[i]; t = (int)i; }
+            ref.push_back(t);
+        }
+        eng->step(ref.back(), L + n);
+        eng->logits(lg);
+        std::vector<float> lref = lg;
+        eng->reset();
+        eng->set_mtp_enabled(true);
+        eng->prefill(prompt.data(), L, 0);
+        EvenConstraint c;
+        std::vector<int> got;
+        eng->decode_greedy_constrained(tok0, L, n, got, &c);
+        eng->step(got.back(), L + n);
+        std::vector<float> lgot;
+        eng->logits(lgot);
+        bool ok = (int)got.size() == n && lgot == lref;
+        for (int j = 0; j < n && ok; ++j) ok = got[j] == ref[j + 1];
+        std::printf("constrained greedy (even ids only, %d tokens): ids+state identical=%d (accepted by constraint %d)\n", n, (int)ok, c.accepted);
         if (!ok) ++fail;
     }
     // 1b. state consistency at T > 0: after speculative sampling of n tokens (any accept pattern) the engine state must equal plain decode's after the same tokens

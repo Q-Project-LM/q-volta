@@ -27,7 +27,7 @@ def run(port, kind, max_tokens, pad, temperature):
     payload = {'messages': msgs, 'max_tokens': max_tokens, 'stream': True, **extra}
     if temperature is not None:
         payload['temperature'] = temperature
-    t0 = time.monotonic(); first = None; n = 0; timings = None
+    t0 = time.monotonic(); first = None; n = 0; timings = None; targs = {}
     req = urllib.request.Request(f'http://127.0.0.1:{port}/v1/chat/completions', data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json'})
     with urllib.request.urlopen(req, timeout=600) as r:
         for line in r:
@@ -38,11 +38,19 @@ def run(port, kind, max_tokens, pad, temperature):
             if 'timings' in d: timings = d['timings']
             for c in d.get('choices', []):
                 dl = c.get('delta', {})
+                for tc in dl.get('tool_calls') or []:
+                    targs[tc.get('index', 0)] = targs.get(tc.get('index', 0), '') + ((tc.get('function') or {}).get('arguments') or '')
                 if dl.get('content') or dl.get('reasoning_content') or dl.get('tool_calls'):
                     if first is None: first = time.monotonic()
                     n += 1
     el = time.monotonic() - t0
     row = {'kind': kind, 'chunks': n, 'ttft_s': (first - t0) if first else None, 'elapsed_s': el}
+    if kind == 'tool':
+        ok = bool(targs)
+        for a_ in targs.values():
+            try: json.loads(a_)
+            except Exception: ok = False
+        row['tool_calls'] = len(targs); row['tool_json_ok'] = ok
     if first and n > 1: row['client_chunks_per_s'] = (n - 1) / (time.monotonic() - first)
     if timings:
         row['predicted_n'] = timings.get('predicted_n'); row['decode_tok_s'] = timings.get('predicted_per_second')
