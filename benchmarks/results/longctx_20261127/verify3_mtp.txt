@@ -1,0 +1,20 @@
+cached A turn 1 cache_n=0 prompt_n=7316
+cached B turn 1 cache_n=0 prompt_n=7248
+cached A turn 2 cache_n=6144 prompt_n=1351
+cached B turn 2 cache_n=6144 prompt_n=1503
+cached A turn 3 cache_n=6144 prompt_n=1708
+cached B turn 3 cache_n=6144 prompt_n=2044
+uncached A turn 1 cache_n=0 prompt_n=7316
+uncached B turn 1 cache_n=0 prompt_n=7248
+uncached A turn 2 cache_n=0 prompt_n=7495
+uncached B turn 2 cache_n=0 prompt_n=7647
+uncached A turn 3 cache_n=0 prompt_n=7852
+uncached B turn 3 cache_n=0 prompt_n=8188
+uncached2 A turn 1 cache_n=0 prompt_n=7316
+uncached2 B turn 1 cache_n=0 prompt_n=7248
+uncached2 A turn 2 cache_n=0 prompt_n=7495
+uncached2 B turn 2 cache_n=0 prompt_n=7647
+uncached2 A turn 3 cache_n=0 prompt_n=7852
+uncached2 B turn 3 cache_n=0 prompt_n=8188
+VERIFY cached vs uncached identical: True (6 replies)
+VERIFY uncached vs uncached (determinism floor) identical: True (6 replies)

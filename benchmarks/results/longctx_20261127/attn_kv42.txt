@@ -1,0 +1,41 @@
+prefill kernel: tensor-core
+== int4, K per-channel ==
+T=  100  int4 prefill vs fp32: rel L2 0.0000 | decode vs prefill(int4): 1.50e-04 | multichunk vs single: 0.00e+00
+T=  191  int4 prefill vs fp32: rel L2 0.0000 | decode vs prefill(int4): 1.40e-04 | multichunk vs single: 0.00e+00
+T=  192  int4 prefill vs fp32: rel L2 0.0019 | decode vs prefill(int4): 1.53e-04 | multichunk vs single: 0.00e+00
+T=  193  int4 prefill vs fp32: rel L2 0.0027 | decode vs prefill(int4): 1.53e-04 | multichunk vs single: 0.00e+00
+T=  255  int4 prefill vs fp32: rel L2 0.0118 | decode vs prefill(int4): 1.32e-04 | multichunk vs single: 0.00e+00
+T=  256  int4 prefill vs fp32: rel L2 0.0120 | decode vs prefill(int4): 1.58e-04 | multichunk vs single: 0.00e+00
+T=  319  int4 prefill vs fp32: rel L2 0.0164 | decode vs prefill(int4): 1.32e-04 | multichunk vs single: 0.00e+00
+T=  320  int4 prefill vs fp32: rel L2 0.0164 | decode vs prefill(int4): 1.42e-04 | multichunk vs single: 0.00e+00
+T= 1000  int4 prefill vs fp32: rel L2 0.0253 | decode vs prefill(int4): 1.02e-04 | multichunk vs single: 0.00e+00
+T= 2047  int4 prefill vs fp32: rel L2 0.0242 | decode vs prefill(int4): 6.92e-05 | multichunk vs single: 0.00e+00
+T= 2048  int4 prefill vs fp32: rel L2 0.0242 | decode vs prefill(int4): 6.96e-05 | multichunk vs single: 0.00e+00
+T= 3999  int4 prefill vs fp32: rel L2 0.0212 | decode vs prefill(int4): 5.13e-05 | multichunk vs single: 0.00e+00
+== int4, K per-token ==
+T=  100  int4 prefill vs fp32: rel L2 0.0000 | decode vs prefill(int4): 1.50e-04 | multichunk vs single: 0.00e+00
+T=  191  int4 prefill vs fp32: rel L2 0.0000 | decode vs prefill(int4): 1.40e-04 | multichunk vs single: 0.00e+00
+T=  192  int4 prefill vs fp32: rel L2 0.0029 | decode vs prefill(int4): 1.48e-04 | multichunk vs single: 0.00e+00
+T=  193  int4 prefill vs fp32: rel L2 0.0040 | decode vs prefill(int4): 1.59e-04 | multichunk vs single: 0.00e+00
+T=  255  int4 prefill vs fp32: rel L2 0.0172 | decode vs prefill(int4): 1.35e-04 | multichunk vs single: 0.00e+00
+T=  256  int4 prefill vs fp32: rel L2 0.0174 | decode vs prefill(int4): 1.57e-04 | multichunk vs single: 0.00e+00
+T=  319  int4 prefill vs fp32: rel L2 0.0240 | decode vs prefill(int4): 1.25e-04 | multichunk vs single: 0.00e+00
+T=  320  int4 prefill vs fp32: rel L2 0.0241 | decode vs prefill(int4): 1.33e-04 | multichunk vs single: 0.00e+00
+T= 1000  int4 prefill vs fp32: rel L2 0.0370 | decode vs prefill(int4): 9.32e-05 | multichunk vs single: 0.00e+00
+T= 2047  int4 prefill vs fp32: rel L2 0.0353 | decode vs prefill(int4): 6.69e-05 | multichunk vs single: 0.00e+00
+T= 2048  int4 prefill vs fp32: rel L2 0.0352 | decode vs prefill(int4): 6.79e-05 | multichunk vs single: 0.00e+00
+T= 3999  int4 prefill vs fp32: rel L2 0.0308 | decode vs prefill(int4): 5.17e-05 | multichunk vs single: 0.00e+00
+== fp16 KV (exact ring) ==
+T=  100  int4 prefill vs fp32: rel L2 0.0000 | decode vs prefill(int4): 1.50e-04 | multichunk vs single: 0.00e+00
+T=  191  int4 prefill vs fp32: rel L2 0.0000 | decode vs prefill(int4): 1.40e-04 | multichunk vs single: 0.00e+00
+T=  192  int4 prefill vs fp32: rel L2 0.0000 | decode vs prefill(int4): 1.26e-04 | multichunk vs single: 0.00e+00
+T=  193  int4 prefill vs fp32: rel L2 0.0000 | decode vs prefill(int4): 1.34e-04 | multichunk vs single: 0.00e+00
+T=  255  int4 prefill vs fp32: rel L2 0.0000 | decode vs prefill(int4): 1.11e-04 | multichunk vs single: 0.00e+00
+T=  256  int4 prefill vs fp32: rel L2 0.0000 | decode vs prefill(int4): 1.15e-04 | multichunk vs single: 0.00e+00
+T=  319  int4 prefill vs fp32: rel L2 0.0000 | decode vs prefill(int4): 1.03e-04 | multichunk vs single: 0.00e+00
+T=  320  int4 prefill vs fp32: rel L2 0.0000 | decode vs prefill(int4): 1.01e-04 | multichunk vs single: 0.00e+00
+T= 1000  int4 prefill vs fp32: rel L2 0.0000 | decode vs prefill(int4): 6.76e-05 | multichunk vs single: 0.00e+00
+T= 2047  int4 prefill vs fp32: rel L2 0.0000 | decode vs prefill(int4): 4.68e-05 | multichunk vs single: 0.00e+00
+T= 2048  int4 prefill vs fp32: rel L2 0.0000 | decode vs prefill(int4): 4.94e-05 | multichunk vs single: 0.00e+00
+T= 3999  int4 prefill vs fp32: rel L2 0.0000 | decode vs prefill(int4): 3.65e-05 | multichunk vs single: 0.00e+00
+PASS

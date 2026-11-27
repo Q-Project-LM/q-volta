@@ -1,0 +1,17 @@
+chars/token = 2.625
+{"prompt_n": 40085, "cache_n": 0, "prompt_ms": 24222.38, "predicted_n": 96, "predicted_ms": 885.64, "decode_tps": 108.4, "ttft_s": 24.37, "wall_s": 25.23, "finish": "length", "usage_prompt": 40085, "prefill_tps": 1654.87, "session": "A", "turn": 0, "reply_chars": 0, "reasoning_chars": 429, "n_calls": 0, "label": "dev_nomtp_p2"}
+{"prompt_n": 40358, "cache_n": 0, "prompt_ms": 24514.53, "predicted_n": 96, "predicted_ms": 886.33, "decode_tps": 108.31, "ttft_s": 24.56, "wall_s": 25.43, "finish": "length", "usage_prompt": 40358, "prefill_tps": 1646.29, "session": "B", "turn": 0, "reply_chars": 0, "reasoning_chars": 375, "n_calls": 0, "label": "dev_nomtp_p2"}
+{"prompt_n": 170, "cache_n": 40069, "prompt_ms": 477.62, "predicted_n": 96, "predicted_ms": 879.48, "decode_tps": 109.16, "ttft_s": 0.55, "wall_s": 1.41, "finish": "length", "usage_prompt": 40239, "prefill_tps": 355.93, "session": "A", "turn": 1, "reply_chars": 0, "reasoning_chars": 412, "n_calls": 0, "label": "dev_nomtp_p2"}
+{"prompt_n": 390, "cache_n": 40342, "prompt_ms": 706.79, "predicted_n": 96, "predicted_ms": 880.76, "decode_tps": 109.0, "ttft_s": 0.77, "wall_s": 1.64, "finish": "length", "usage_prompt": 40732, "prefill_tps": 551.79, "session": "B", "turn": 1, "reply_chars": 0, "reasoning_chars": 337, "n_calls": 0, "label": "dev_nomtp_p2"}
+{"prompt_n": 514, "cache_n": 40069, "prompt_ms": 742.88, "predicted_n": 96, "predicted_ms": 879.39, "decode_tps": 109.17, "ttft_s": 0.82, "wall_s": 1.68, "finish": "length", "usage_prompt": 40583, "prefill_tps": 691.9, "session": "A", "turn": 2, "reply_chars": 0, "reasoning_chars": 368, "n_calls": 0, "label": "dev_nomtp_p2"}
+{"prompt_n": 871, "cache_n": 40342, "prompt_ms": 977.63, "predicted_n": 96, "predicted_ms": 882.68, "decode_tps": 108.76, "ttft_s": 1.05, "wall_s": 1.91, "finish": "length", "usage_prompt": 41213, "prefill_tps": 890.93, "session": "B", "turn": 2, "reply_chars": 0, "reasoning_chars": 413, "n_calls": 0, "label": "dev_nomtp_p2"}
+| session | turn | prompt | cache_n | prompt_ms | prefill_tps | predicted_n | decode_tps | wall_s |
+|---|---|---|---|---|---|---|---|---|
+| A | 0 | 40085 | 0 | 24222.4 | 1654.9 | 96 | 108.4 | 25.2 |
+| B | 0 | 40358 | 0 | 24514.5 | 1646.3 | 96 | 108.3 | 25.4 |
+| A | 1 | 40239 | 40069 | 477.6 | 355.9 | 96 | 109.2 | 1.4 |
+| B | 1 | 40732 | 40342 | 706.8 | 551.8 | 96 | 109.0 | 1.6 |
+| A | 2 | 40583 | 40069 | 742.9 | 691.9 | 96 | 109.2 | 1.7 |
+| B | 2 | 41213 | 40342 | 977.6 | 890.9 | 96 | 108.8 | 1.9 |
+hit-rate (turns after the first of each session, cache_n > 50% of prompt): 4/4
+turn wall-latency s: median 1.68  p90 1.91  max 1.91

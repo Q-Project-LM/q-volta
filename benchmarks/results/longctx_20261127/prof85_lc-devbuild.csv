@@ -1,0 +1,63 @@
+Generating SQLite file /tmp/lc-res/prof85_lc-devbuild.sqlite from /tmp/lc-res/prof85_lc-devbuild.nsys-rep
+Processing [/tmp/lc-res/prof85_lc-devbuild.sqlite] with [/opt/nvidia/nsight-systems/2024.5.1/host-linux-x64/reports/cuda_gpu_kern_sum.py]... 
+Time (%),Total Time (ns),Instances,Avg (ns),Med (ns),Min (ns),Max (ns),StdDev (ns),Name
+48.4,61498025043,4032,15252486.4,3357591.5,1910140,148167550,31793497.4,qv::cuda::ink::k_attn_pf(qv::cuda::ink::PfAttnArgs)
+9.6,12152879617,942860,12889.4,15535.5,7200,21632,4394.6,"void qv::cuda::dequant_kernel<(int)3>(qv::cuda::QMat, int, long long, __half *)"
+8.0,10195572330,356412,28606.1,32161.0,12991,52640,9537.4,void cutlass::Kernel2<cutlass_70_wmma_tensorop_f16_s161616gemm_f16_32x32_64x2_tn_align8>(T1::Params)
+3.6,4514994176,12096,373263.4,387327.0,244031,421630,28036.6,void cutlass::Kernel2<cutlass_70_tensorop_s884gemm_f16_128x128_tn_align8>(T1::Params)
+3.5,4501445169,48736,92363.9,75936.0,39071,274879,41920.1,void cutlass::Kernel2<cutlass_70_tensorop_f16_s884gemm_relu_f16_128x128_tn_align8>(T1::Params)
+2.4,3072396449,38052,80742.0,63616.0,35808,285567,43165.7,volta_fp16_s884gemm_fp16_128x128_ldg8_f2f_stages_32x1_tn
+2.3,2981776520,67800,43979.0,43999.0,39809,51967,2091.5,void cutlass::Kernel2<cutlass_70_tensorop_f16_s884gemm_relu_f16_64x64_tn_align8>(T1::Params)
+2.3,2914570848,151208,19275.2,19520.0,9856,56608,9399.3,void cutlass::Kernel2<cutlass_70_wmma_tensorop_s161616gemm_f16_32x32_64x2_tn_align8>(T1::Params)
+2.2,2818988371,78206,36045.7,31360.0,23968,59041,10998.2,volta_fp16_s884gemm_fp16_64x64_ldg8_f2f_tn
+2.0,2524404080,32708,77180.0,72032.0,60575,145024,12692.1,volta_fp16_s884gemm_fp16_256x128_ldg8_f2f_tn
+1.9,2423230803,44040,55023.4,55760.0,32320,81824,17878.9,volta_fp16_s884gemm_fp16_128x64_ldg8_f2f_tn
+1.8,2305447827,89336,25806.5,25056.0,7520,55168,15621.2,void cutlass::Kernel2<cutlass_70_wmma_tensorop_f16_s161616gemm_f16_16x16_64x2_tn_align8>(T1::Params)
+1.3,1594639907,15308,104170.4,15232.0,6560,298974,102135.7,void qv::cuda::ink::k_ar<(int)1>(qv::cuda::ink::ArArgs)
+1.1,1440529553,19490,73911.2,74943.0,65535,87327,3473.2,volta_fp16_s884gemm_fp16_128x256_ldg8_f2f_tn
+0.8,1021416370,7872,129753.1,129440.0,122079,148544,3884.5,volta_s884gemm_fp16_256x128_ldg8_tn
+0.8,983186034,8064,121922.9,123168.0,61791,128224,9227.8,"qv::cuda::ink::k_gate_cat(const float *, const float *, __half *)"
+0.7,949108361,8064,117697.0,119008.0,61216,120639,8718.6,"qv::cuda::ink::k_gate_apply_t(const float *, const float *, const float *, const float *, long, float *)"
+0.7,850654906,4032,210975.9,213408.0,106496,238464,16437.7,"qv::cuda::ink::k_act(const __half *, int, float, float, __half *)"
+0.6,698632874,4032,173272.0,175200.0,76991,186176,14892.0,"qv::cuda::ink::k_gather(const __half *, const int *, int, __half *)"
+0.5,646259141,2192,294826.3,322112.0,17696,336768,84861.1,void qv::cuda::ink::k_ar<(int)4>(qv::cuda::ink::ArArgs)
+0.5,591584593,4032,146722.4,148271.0,79584,162975,10189.2,volta_fp16_s884gemm_fp16_256x64_ldg8_f2f_nn
+0.4,541967953,15744,34423.8,33439.0,30720,40095,2389.3,volta_s884gemm_fp16_128x64_ldg8_tn
+0.4,530071467,4032,131466.1,132927.0,67839,136704,9724.7,"qv::cuda::ink::k_combine(const __half *, const int *, const float *, int, float *)"
+0.4,462813877,30184,15333.1,16608.5,7104,23777,5855.5,"void gemv2T_kernel_val<int, int, __half, __half, __half, float, (int)128, (int)16, (int)4, (int)4, (bool)0, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __half>, cublasGemvTensorStridedBatched<const __half>, cublasGemvTensorStridedBatched<__half>, float>>(T13, T6, T6)"
+0.3,433496215,4032,107513.9,106624.0,56351,123968,9344.8,qv::cuda::ink::k_prep_t(qv::cuda::ink::PrepTArgs)
+0.3,432521208,68372,6326.0,3424.0,1887,14112,4154.3,"void cublasLt::splitKreduce_kernel<(int)32, (int)16, int, __half, __half, float, __half, (bool)0, __half, __half, __half, (bool)1, (bool)0, (bool)0, (bool)0>(cublasLt::cublasSplitKParams<T6>, const T4 *, const T10 *, T9 *, T5 *, const T6 *, const T6 *, const T11 *, const T4 *, T11 *, void *, long, T6 *, int *, T6 *, T6 *, const T6 *, const T6 *, const T6 *, const T6 *, const T6 *)"
+0.3,394623133,20160,19574.6,25856.0,8032,28896,8494.2,"void qv::cuda::dequant_kernel<(int)5>(qv::cuda::QMat, int, long long, __half *)"
+0.3,367648888,137896,2666.1,2528.0,1951,14368,657.4,"void cublasLt::splitKreduce_kernel<(int)32, (int)16, int, float, __half, float, __half, (bool)0, __half, __half, __half, (bool)1, (bool)0, (bool)0, (bool)0>(cublasLt::cublasSplitKParams<T6>, const T4 *, const T10 *, T9 *, T5 *, const T6 *, const T6 *, const T11 *, const T4 *, T11 *, void *, long, T6 *, int *, T6 *, T6 *, const T6 *, const T6 *, const T6 *, const T6 *, const T6 *)"
+0.3,359765751,4224,85171.8,22336.0,21728,410047,140630.5,qv::cuda::ink::k_attn_part(qv::cuda::ink::AttnArgs)
+0.3,359023270,8340,43048.4,6016.0,5344,108641,41961.6,qv::cuda::ink::k_norm(qv::cuda::ink::NormArgs)
+0.3,332679832,4448,74793.1,82113.0,12065,91200,20833.0,volta_s884gemm_fp16_64x64_ldg8_tn
+0.2,294369130,4208,69954.6,72704.0,5344,74687,13470.4,"qv::cuda::ink::k_finish(const float *, const float *, const float *, float *, float *, int)"
+0.2,267100873,4032,66245.3,65952.0,62816,79903,2111.2,volta_s884gemm_128x128_ldg8_f2f_tn
+0.2,221807447,6720,33007.1,32993.0,30208,35521,713.7,"qv::cuda::ink::k_stage_to_ring(const __half *, __half *, int, int, int)"
+0.2,205844893,6720,30631.7,31135.0,6752,34688,3879.2,"qv::cuda::ink::k_ring_to_stage(const __half *, __half *, int, int)"
+0.2,191777652,1376,139373.3,25536.0,16255,289791,122294.7,void qv::cuda::ink::k_ar<(int)3>(qv::cuda::ink::ArArgs)
+0.1,141919205,8448,16799.1,16112.0,8735,29088,7051.9,"void qv::cuda::ink::k_mgemv<(int)5, (int)1>(qv::cuda::ink::GDs)"
+0.1,138816958,4224,32863.9,32832.0,31232,34944,547.0,"void qv::cuda::ink::k_w13<(int)3>(qv::cuda::ink::ExpertW, qv::cuda::Q8Vec, const int *, qv::cuda::Q8Buf, float, float)"
+0.1,81367595,4224,19263.2,19168.0,17791,28480,633.6,"void qv::cuda::ink::k_w2<(int)3, (int)2>(qv::cuda::ink::ExpertW, qv::cuda::Q8Vec, const int *, const float *, float *)"
+0.0,54589262,172,317379.4,316127.0,313151,323839,2937.8,"void qv::cuda::gemv_q8_kernel<(int)4, (int)2, (int)2, (int)2>(qv::cuda::QMat, qv::cuda::Q8Vec, float *, const float *)"
+0.0,48218063,4224,11415.3,11424.0,10848,22465,315.7,"qv::cuda::ink::k_router(const __half *, const float *, const float *, float *, int *, float *, int *, float)"
+0.0,41978555,4032,10411.3,10400.0,9344,11648,232.1,"qv::cuda::ink::k_topk_t(const float *, const float *, int *, float *, int, float)"
+0.0,37018021,4224,8763.7,8512.0,8192,10592,630.9,qv::cuda::ink::k_prep(qv::cuda::ink::PrepArgs)
+0.0,36339174,4224,8603.0,8576.0,8096,9056,121.3,qv::cuda::ink::k_gate_apply(qv::cuda::ink::GateArgs)
+0.0,35964844,16128,2230.0,2208.0,1759,11968,363.5,"qv::cuda::ink::k_conv_commit(const float *, long, int, int, float *)"
+0.0,34275510,4224,8114.5,8000.0,6432,9632,547.5,qv::cuda::ink::k_gate_down(qv::cuda::ink::GateArgs)
+0.0,32576825,8192,3976.7,3968.0,2656,12319,546.2,"void cublasLt::splitKreduce_kernel<(int)32, (int)16, int, float, float, float, float, (bool)0, float, float, float, (bool)1, (bool)0, (bool)0, (bool)0>(cublasLt::cublasSplitKParams<T6>, const T4 *, const T10 *, T9 *, T5 *, const T6 *, const T6 *, const T11 *, const T4 *, T11 *, void *, long, T6 *, int *, T6 *, T6 *, const T6 *, const T6 *, const T6 *, const T6 *, const T6 *)"
+0.0,32322281,4032,8016.4,8000.0,4256,10912,779.4,"qv::cuda::ink::k_scatter(const int *, int, const int *, int *, int *, int *)"
+0.0,30775420,4032,7632.8,7616.0,4032,10591,771.4,"qv::cuda::ink::k_count(const int *, int, int *)"
+0.0,30233744,4224,7157.6,6048.0,5696,20928,2536.7,qv::cuda::ink::k_attn_combine(qv::cuda::ink::AttnArgs)
+0.0,29488181,4032,7313.5,7296.0,7071,8609,135.0,"qv::cuda::ink::k_scan(const int *, int *, int *)"
+0.0,21243291,8088,2626.5,2624.0,1760,14272,444.0,"qv::cuda::ink::k_f2h(const float *, long, __half *)"
+0.0,19729689,288,68505.9,74927.5,49215,83008,13125.9,volta_s884gemm_fp16_128x128_ldg8_tn
+0.0,16603634,336,49415.6,49407.0,48704,50367,279.3,"qv::cuda::ink::k_copy(const float *, float *, long)"
+0.0,5615413,172,32647.8,7440.0,6752,67744,26431.8,"qv::cuda::ink::k_embed(qv::cuda::QMat, const int *, const float *, float *, float *)"
+0.0,646240,172,3757.2,3744.0,3392,4160,102.7,"qv::cuda::ink::k_softcap(float *, int, float)"
+0.0,317825,90,3531.4,3520.0,2944,3680,102.4,"qv::cuda::argmax_partial_kernel(const float *, int, float *, int *)"
+0.0,283299,90,3147.8,3136.0,1792,3328,211.1,"qv::cuda::argmax_final_kernel(const float *, const int *, int, int *, int *, int *)"
+0.0,96959,24,4040.0,3984.0,3872,4704,192.5,"qv::cuda::ink::k_h2f(const __half *, long, float *)"
+

@@ -119,3 +119,10 @@ Update: e1b1 (10.40 GiB) measured: ppl 8x512 9.112, KL to Q8_0 0.0750, top-1 89.
 - Finding: inter-kernel gaps in the graph are 0.47 us (3 %); the time is per-kernel dependent latency chains. Wins: load hoisting, finer GEMV decomposition, removing a hidden local copy of a kernel argument struct, shared barriers, rank-based top-8, finish folded into attn_res. Ticket-merged kernels, side-stream branches, L2 prefetch and forced occupancy were slower (docs/INKLING_ENGINE.md).
 - MTP: absolute speed +1.7 % (code) but the gain over plain shrank 1.14x -> 1.02x because the verify rows kernels were not restructured (open item).
 - New: tests/test_ink_exact.cpp (per-step logits hash regression).
+
+## p30/longctx (2026-11-27) - long-context agent traffic (branch p30/longctx, not merged)
+- Root cause of 60 s re-prefills at 60K-85K with `--mtp`: engine checkpoints were disabled whenever the MTP drafter was loaded. Fixed (drafter state in the checkpoint); replay of two interleaved 60K sessions: hits 0/4 -> 4/4, turn 42 s -> 4.1 s median (1.7-2.1 s for one session).
+- `--checkpoint-align` makes a restored checkpoint reproduce an uncached prefill exactly (cached == uncached greedy replies 6/6, with and without MTP).
+- Decode attention +7-14 % at 64K-262K (exact), verify rows -20 %, prefill attention -20 % per chunk (exact); chunk 4096/8192 prefill -21/-34 % at 32K (numerics differ, default unchanged).
+- Open: MTP still loses to plain decode at 85K (rows kernel instruction bound), L2 park of a 60K context takes 1-1.7 s (page faults of the host blob), 128K-256K real prefill/quality untested, one tool-call turn decoded at 2.2 tok/s (handed to p28/loops).
+- Tools: benchmarks/longctx_replay.py, benchmarks/longctx_server_replay.sh, tests/test_ink_ckpt.cpp, tests/bench_attn_long.cu, tests/bench_attn_pf.cu.

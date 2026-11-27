@@ -1,0 +1,13 @@
+chars/token = 2.625
+{"prompt_n": 60433, "cache_n": 0, "prompt_ms": 40968.33, "predicted_n": 96, "predicted_ms": 1123.6, "decode_tps": 85.44, "ttft_s": 41.5, "wall_s": 42.23, "finish": "length", "usage_prompt": 60433, "prefill_tps": 1475.12, "session": "A", "turn": 0, "reply_chars": 0, "reasoning_chars": 385, "n_calls": 0, "label": "patched_mtp_single"}
+{"prompt_n": 176, "cache_n": 60417, "prompt_ms": 528.83, "predicted_n": 96, "predicted_ms": 1115.31, "decode_tps": 86.08, "ttft_s": 1.01, "wall_s": 1.72, "finish": "length", "usage_prompt": 60593, "prefill_tps": 332.81, "session": "A", "turn": 1, "reply_chars": 0, "reasoning_chars": 411, "n_calls": 0, "label": "patched_mtp_single"}
+{"prompt_n": 472, "cache_n": 60417, "prompt_ms": 854.8, "predicted_n": 96, "predicted_ms": 1153.63, "decode_tps": 83.22, "ttft_s": 1.28, "wall_s": 2.08, "finish": "length", "usage_prompt": 60889, "prefill_tps": 552.17, "session": "A", "turn": 2, "reply_chars": 0, "reasoning_chars": 385, "n_calls": 0, "label": "patched_mtp_single"}
+{"prompt_n": 766, "cache_n": 60417, "prompt_ms": 916.2, "predicted_n": 96, "predicted_ms": 42814.2, "decode_tps": 2.24, "ttft_s": 1.34, "wall_s": 43.8, "finish": "tool_calls", "usage_prompt": 61183, "prefill_tps": 836.07, "session": "A", "turn": 3, "reply_chars": 0, "reasoning_chars": 296, "n_calls": 1, "label": "patched_mtp_single"}
+| session | turn | prompt | cache_n | prompt_ms | prefill_tps | predicted_n | decode_tps | wall_s |
+|---|---|---|---|---|---|---|---|---|
+| A | 0 | 60433 | 0 | 40968.3 | 1475.1 | 96 | 85.4 | 42.2 |
+| A | 1 | 60593 | 60417 | 528.8 | 332.8 | 96 | 86.1 | 1.7 |
+| A | 2 | 60889 | 60417 | 854.8 | 552.2 | 96 | 83.2 | 2.1 |
+| A | 3 | 61183 | 60417 | 916.2 | 836.1 | 96 | 2.2 | 43.8 |
+hit-rate (turns after the first of each session, cache_n > 50% of prompt): 3/3
+turn wall-latency s: median 2.08  p90 43.80  max 43.80

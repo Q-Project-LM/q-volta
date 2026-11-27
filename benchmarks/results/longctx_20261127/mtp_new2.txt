@@ -1,0 +1,7 @@
+depth 3 /workspace/q-volta-wt/longctx/benchmarks/prompts/code.i32 (37 tokens): 64 tokens, ids identical=1, next-step logits identical=1, cycles=27 drafted=81 accepted=36 (mean accepted/cycle 1.33) plain_steps=0
+depth 3 /tmp/lc-data/b.i32 (5945 tokens): 64 tokens, ids identical=1, next-step logits identical=1, cycles=24 drafted=72 accepted=39 (mean accepted/cycle 1.62) plain_steps=0
+depth 3 /tmp/lc-data/a.i32 (17656 tokens): 64 tokens, ids identical=1, next-step logits identical=1, cycles=27 drafted=81 accepted=34 (mean accepted/cycle 1.26) plain_steps=2
+depth 7 /workspace/q-volta-wt/longctx/benchmarks/prompts/code.i32 (37 tokens): 64 tokens, ids identical=1, next-step logits identical=1, cycles=25 drafted=175 accepted=35 (mean accepted/cycle 1.40) plain_steps=3
+depth 7 /tmp/lc-data/b.i32 (5945 tokens): 64 tokens, ids identical=1, next-step logits identical=1, cycles=20 drafted=140 accepted=40 (mean accepted/cycle 2.00) plain_steps=3
+depth 7 /tmp/lc-data/a.i32 (17656 tokens): 64 tokens, ids identical=1, next-step logits identical=1, cycles=26 drafted=182 accepted=31 (mean accepted/cycle 1.19) plain_steps=6
+PASS

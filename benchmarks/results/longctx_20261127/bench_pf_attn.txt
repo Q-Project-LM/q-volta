@@ -1,0 +1,4 @@
+v1: pos0 63488 T 2048: 111.28 ms/call (14.6 TFLOP/s useful), out hash 1031b9be77642f8e
+v3: pos0 63488 T 2048: 88.32 ms/call (18.4 TFLOP/s useful), out hash 1031b9be77642f8e
+v1: pos0 83000 T 2048: 145.69 ms/call (14.5 TFLOP/s useful), out hash 2c60dc41432c3c03
+v3: pos0 83000 T 2048: 114.64 ms/call (18.4 TFLOP/s useful), out hash 2c60dc41432c3c03
