@@ -1309,12 +1309,12 @@ def test_models_preset_routing(tmp_path):
         assert by_id["m1"]["status"]["value"] == "unloaded"
         assert by_id["m2"]["status"]["value"] == "unloaded"
 
-        st, _, r1 = s.req("POST", "/v1/chat/completions", {"model": "m1", "messages": [{"role": "user", "content": "hi"}], "chat_template_kwargs": {"enable_thinking": False}})
+        st, _, r1 = s.req("POST", "/v1/chat/completions", {"model": "m1", "messages": [{"role": "user", "content": "hi"}], "temperature": 0, "chat_template_kwargs": {"enable_thinking": False}})
         assert st == 200 and r1["model"] == "m1" and "alpha" in r1["choices"][0]["message"]["content"]
         by_id = {d["id"]: d for d in s.req("GET", "/v1/models")[2]["data"]}
         assert by_id["m1"]["status"]["value"] == "loaded" and by_id["m2"]["status"]["value"] == "unloaded"
 
-        st, _, r2 = s.req("POST", "/v1/chat/completions", {"model": "m2", "messages": [{"role": "user", "content": "hi"}], "chat_template_kwargs": {"enable_thinking": False}})
+        st, _, r2 = s.req("POST", "/v1/chat/completions", {"model": "m2", "messages": [{"role": "user", "content": "hi"}], "temperature": 0, "chat_template_kwargs": {"enable_thinking": False}})
         assert st == 200 and r2["model"] == "m2" and "beta" in r2["choices"][0]["message"]["content"]
         assert s.req("GET", "/props")[2]["default_generation_settings"]["n_ctx"] == 8192 // 2  # max-context is shared by the 2 slots (max-concurrency)
 
@@ -1668,13 +1668,13 @@ def test_reasoning_budget_and_length_inside_reasoning():
     """finish_reason=length inside the thinking block: content "" + reasoning_content (as llama-server); --reasoning-budget closes the block."""
     s = Srv(qv_cmd("--mock-loop", "--mock-text", "alpha beta gamma delta"), name="rlen")
     try:
-        r = s.req("POST", "/v1/chat/completions", {"messages": [{"role": "user", "content": "a"}], "max_tokens": 5})[2]["choices"][0]
+        r = s.req("POST", "/v1/chat/completions", {"messages": [{"role": "user", "content": "a"}], "max_tokens": 5, "temperature": 0})[2]["choices"][0]
         assert r["finish_reason"] == "length" and r["message"]["content"] == "" and r["message"]["reasoning_content"].startswith("alpha beta")
     finally:
         s.stop()
     s = Srv(qv_cmd("--mock-loop", "--mock-text", "alpha beta gamma delta", "--reasoning-budget", "6", "--reasoning-budget-message", "Time is up."), name="rbud")
     try:
-        r = s.req("POST", "/v1/chat/completions", {"messages": [{"role": "user", "content": "a"}], "max_tokens": 40})[2]["choices"][0]["message"]
+        r = s.req("POST", "/v1/chat/completions", {"messages": [{"role": "user", "content": "a"}], "max_tokens": 40, "temperature": 0})[2]["choices"][0]["message"]
         assert r["reasoning_content"].endswith("Time is up.") and r["content"].strip() != ""
     finally:
         s.stop()
