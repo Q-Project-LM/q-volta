@@ -742,6 +742,21 @@ def test_mtp_lazy_grammar_tools():
     finally:
         a.stop(); b.stop()
 
+    # 2b. Mid-chunk trigger followed by a grammar-VALID call: the unmasked lookahead equals the masked draw, so no rollback / re-prefill (p28/loops:
+    #     engines without state_save, i.e. Inkling, used to reset and re-prefill the whole context here) and the result equals the plain 1-token path
+    ok_txt = "Sure, checking now.\n<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call>"
+    a = Srv(qv_cmd("--mock-text", ok_txt), name="valid_plain")
+    b = Srv(qv_cmd("--mock-text", ok_txt, "--mtp"), env={"QV_MTP_DEBUG": "1"}, name="valid_mtp")
+    try:
+        ra = a.req("POST", "/v1/chat/completions", chat_body(tools=[WEATHER], max_tokens=200))[2]["choices"][0]
+        rb = b.req("POST", "/v1/chat/completions", chat_body(tools=[WEATHER], max_tokens=200))[2]["choices"][0]
+        assert rb["finish_reason"] == "tool_calls" and rb["message"]["content"] == ra["message"]["content"] and rb["message"]["tool_calls"][0]["function"] == ra["message"]["tool_calls"][0]["function"] and ra["finish_reason"] == "tool_calls"
+        assert json.loads(rb["message"]["tool_calls"][0]["function"]["arguments"]) == {"city": "Paris"}
+        log_b = read_log(b)
+        assert "grammar-valid, no rollback" in log_b and "rollback=" not in log_b
+    finally:
+        a.stop(); b.stop()
+
     # 3. Trigger at the very first token (no rollback branch)
     head_txt = "<tool_call>INVALID GARBAGE"
     a = Srv(qv_cmd("--mock-text", head_txt), name="head_plain")

@@ -84,6 +84,39 @@ std::string join(const std::vector<std::string>& v, const std::string& sep) {
     return o;
 }
 std::string q(const std::string& s) { return gbnf_literal(s); }
+
+// Inkling: the chat template prints call arguments with `dictsort` (keys in byte order), optional keys included, so the model writes them in that order.
+// The generic schema rule emits required keys first and then the optional ones in declaration order, which rejects a correct call such as
+// {"path":..,"pattern":..} (pattern required, path optional). Top-level properties are therefore declared in byte order, each required or optional in place.
+// Returns "" when the schema has no explicit properties or allows additional ones (the generic rule is used then).
+std::string inkling_args_rule(SchemaGrammarBuilder& b, const std::string& base, const jd::Value& params) {
+    const jd::Value* pr = params.find("properties");
+    if (!pr || !pr->is_object() || pr->members().empty()) return "";
+    if (const jd::Value* ap = params.find("additionalProperties"); ap && !(ap->is_bool() && !ap->as_bool())) return "";
+    std::vector<std::string> req;
+    if (const jd::Value* r = params.find("required"); r && r->is_array()) for (auto& x : r->items()) if (x.is_string()) req.push_back(x.as_string());
+    std::vector<std::pair<std::string, const jd::Value*>> props;
+    for (auto& m : pr->members()) props.emplace_back(m.first, &m.second);
+    std::stable_sort(props.begin(), props.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
+    const size_t n = props.size();
+    auto cn = [&](size_t i, bool first) { return base + "-c" + std::to_string(i) + (first ? "f" : "n"); };
+    std::vector<std::string> kv(n);
+    for (size_t i = 0; i < n; ++i) {
+        const std::string kn = base + "-k" + std::to_string(i);
+        const std::string val = b.add_schema(kn + "-v", *props[i].second, &params);
+        kv[i] = b.add_rule(kn, q("\"" + props[i].first + "\"") + " ws " + q(":") + " ws " + val);
+    }
+    b.add_rule(cn(n, true), "\"\"");
+    b.add_rule(cn(n, false), "\"\"");
+    for (size_t i = n; i-- > 0;) {
+        const bool required = std::find(req.begin(), req.end(), props[i].first) != req.end();
+        for (bool first : {true, false}) {
+            const std::string item = (first ? std::string() : q(",") + " ws ") + kv[i] + " ws " + cn(i + 1, false);
+            b.add_rule(cn(i, first), required ? item : "(" + item + " | " + cn(i + 1, first) + ")");
+        }
+    }
+    return b.add_rule(base + "-ordered", q("{") + " ws " + cn(0, true) + " ws " + q("}"));
+}
 }  // namespace
 
 ToolGrammar tool_call_grammar(const jd::Value& tools, const ToolGrammarOptions& opt) {
@@ -130,7 +163,9 @@ ToolGrammar tool_call_grammar(const jd::Value& tools, const ToolGrammarOptions& 
             call = q("<tool_call>\n<function=" + d.name + ">\n") + body + " " + q("</function>\n</tool_call>");
             lazy = call;
         } else {
-            std::string args = b.add_schema(base + "-args", d.params);
+            std::string args;
+            if (opt.format == ToolFormat::Inkling) args = inkling_args_rule(b, base + "-oargs", d.params);
+            if (args.empty()) args = b.add_schema(base + "-args", d.params);
             const std::string nm = q(d.name);
             auto json_call = [&](const std::string& key) {
                 return q("{") + " ws " + q("\"name\"") + " ws " + q(":") + " ws " + q("\"" + d.name + "\"") + " ws " + q(",") + " ws " + q("\"" + key + "\"") + " ws " + q(":") + " ws " + args + " ws " + q("}");

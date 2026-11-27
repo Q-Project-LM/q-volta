@@ -274,6 +274,12 @@ static void test_tools() {
         CHECK(!matches(g, "<|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"arguments\":{}}<|end_message|>"));
         auto gl = Grammar::parse(mk(qv::ToolFormat::Inkling).gbnf_lazy);
         CHECK(matches(gl, "<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|>"));
+        // arguments are written in `dictsort` (byte) order by the chat template, whatever the schema's declaration order (p28/loops)
+        CHECK(matches(g, "<|message_model|>get_weather<|content_invoke_tool_json|>{\"name\":\"get_weather\",\"args\":{\"city\":\"P\",\"days\":3,\"unit\":\"c\"}}<|end_message|>"));
+        CHECK(matches(g, "<|message_model|>get_weather<|content_invoke_tool_json|>{\"name\":\"get_weather\",\"args\":{\"city\":\"P\",\"unit\":\"c\"}}<|end_message|>"));
+        CHECK(matches(g, "<|message_model|>get_weather<|content_invoke_tool_json|>{\"name\":\"get_weather\",\"args\":{\"city\":\"P\"}}<|end_message|>"));
+        CHECK(!matches(g, "<|message_model|>get_weather<|content_invoke_tool_json|>{\"name\":\"get_weather\",\"args\":{\"days\":3}}<|end_message|>"));   // city is required
+        CHECK(!matches(g, "<|message_model|>get_weather<|content_invoke_tool_json|>{\"name\":\"get_weather\",\"args\":{\"unit\":\"c\",\"city\":\"P\"}}<|end_message|>"));  // not byte order
     }
     {
         auto g = Grammar::parse(mk(qv::ToolFormat::Generic).gbnf);
