@@ -197,9 +197,12 @@ class InklingEngine final : public Engine {
         QV_CUDA_CHECK(cudaMemset(ticket_, 0, 4));
         QV_CUDA_CHECK(cudaDeviceSynchronize());
     }
-    bool has_checkpoint() const override { return !mtp_; }
+    bool has_checkpoint() const override { return true; }
+    // MTP drafter state that is NOT append-only: the two local-layer context rings (K and V, fp16, 1024 slots) and the recurrent head feature.
+    // The drafter's global-layer context K/V is append-only like the main global KV (kept in VRAM for L1, saved by save_kv_prefix for L2).
+    size_t mtp_ring_bytes() const { return mtp_ ? 4 * (size_t)ik::NKV * 1024 * ik::HD * sizeof(__half) + (size_t)ik::H * sizeof(float) : 0; }
+    size_t mtp_gkv_bytes(int n_tokens) const { return mtp_ ? 2 * (size_t)ik::NKV * (size_t)n_tokens * ik::HD * sizeof(__half) : 0; }
     bool save_checkpoint(std::vector<uint8_t>& out) override {
-        if (mtp_) return false;
         struct InkCkptHdr {
             uint32_t magic = 0x494B4331u;
             uint64_t lkv_b = 0, cstk_b = 0, csta_b = 0, logits_b = 0;
@@ -211,7 +214,7 @@ class InklingEngine final : public Engine {
         h.cstk_b = (size_t)48 * 3 * 1024 * sizeof(float);
         h.csta_b = (size_t)48 * 3 * ik::H * sizeof(float);
         h.logits_b = (size_t)cfg_.vocab * sizeof(float);
-        const size_t tot = sizeof(InkCkptHdr) + 2 * h.lkv_b + 2 * h.cstk_b + 2 * h.csta_b + h.logits_b;
+        const size_t tot = sizeof(InkCkptHdr) + 2 * h.lkv_b + 2 * h.cstk_b + 2 * h.csta_b + h.logits_b + mtp_ring_bytes();
         out.resize(tot);
         uint8_t* p = out.data();
         std::memcpy(p, &h, sizeof(h));
@@ -227,10 +230,14 @@ class InklingEngine final : public Engine {
         get(cst_a_, h.csta_b);
         get(cst_m_, h.csta_b);
         get(logits_, h.logits_b);
+        if (mtp_) {
+            const size_t rb = (size_t)ik::NKV * 1024 * ik::HD * sizeof(__half);
+            get(dkc_[0], rb); get(dvc_[0], rb); get(dkc_[2], rb); get(dvc_[2], rb);
+            get(f_rnn_, (size_t)ik::H * sizeof(float));
+        }
         return true;
     }
     bool restore_checkpoint(const std::vector<uint8_t>& in) override {
-        if (mtp_) return false;
         struct InkCkptHdr {
             uint32_t magic = 0x494B4331u;
             uint64_t lkv_b = 0, cstk_b = 0, csta_b = 0, logits_b = 0;
@@ -244,7 +251,7 @@ class InklingEngine final : public Engine {
         const size_t csta_b = (size_t)48 * 3 * ik::H * sizeof(float);
         const size_t logits_b = (size_t)cfg_.vocab * sizeof(float);
         if (h.lkv_b != lkv_b || h.cstk_b != cstk_b || h.csta_b != csta_b || h.logits_b != logits_b) return false;
-        const size_t tot = sizeof(InkCkptHdr) + 2 * lkv_b + 2 * cstk_b + 2 * csta_b + logits_b;
+        const size_t tot = sizeof(InkCkptHdr) + 2 * lkv_b + 2 * cstk_b + 2 * csta_b + logits_b + mtp_ring_bytes();
         if (in.size() != tot) return false;
         QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
         pend_.on = false;
@@ -260,6 +267,11 @@ class InklingEngine final : public Engine {
         put(cst_a_, csta_b);
         put(cst_m_, csta_b);
         put(logits_, logits_b);
+        if (mtp_) {
+            const size_t rb = (size_t)ik::NKV * 1024 * ik::HD * sizeof(__half);
+            put(dkc_[0], rb); put(dvc_[0], rb); put(dkc_[2], rb); put(dvc_[2], rb);
+            put(f_rnn_, (size_t)ik::H * sizeof(float));
+        }
         QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
         return true;
     }
@@ -269,23 +281,22 @@ class InklingEngine final : public Engine {
         uint64_t payload_bytes = 0;
     };
     size_t checkpoint_bytes() const override {
-        if (mtp_) return 0;
         const size_t lkv_b = (size_t)n_lslots_ * ik::NKV * 1024 * ik::HD * sizeof(__half);
         const size_t cstk_b = (size_t)48 * 3 * 1024 * sizeof(float);
         const size_t csta_b = (size_t)48 * 3 * ik::H * sizeof(float);
         const size_t logits_b = (size_t)cfg_.vocab * sizeof(float);
-        return 40 + 2 * lkv_b + 2 * cstk_b + 2 * csta_b + logits_b;  // sizeof(InkCkptHdr) == 40
+        return 40 + 2 * lkv_b + 2 * cstk_b + 2 * csta_b + logits_b + mtp_ring_bytes();  // sizeof(InkCkptHdr) == 40
     }
-    bool has_kv_checkpoint() const override { return !mtp_; }
+    bool has_kv_checkpoint() const override { return true; }
     size_t kv_checkpoint_bytes(int n_tokens) const override {
-        if (mtp_ || n_tokens < 0 || n_tokens > opt_.max_ctx) return 0;
+        if (n_tokens < 0 || n_tokens > opt_.max_ctx) return 0;
         const size_t rows = (size_t)n_gslots_ * ik::NKV;
         const size_t payload = kv4_ ? rows * (size_t)n_tokens * (64 + 64 + 2 * sizeof(__half2) + 2 * sizeof(__half2))
                                     : 2 * rows * (size_t)n_tokens * ik::HD * sizeof(__half);
-        return sizeof(InkKvHdr) + payload;
+        return sizeof(InkKvHdr) + payload + mtp_gkv_bytes(n_tokens);
     }
     bool save_kv_prefix(std::vector<uint8_t>& out, int n_tokens) override {
-        if (mtp_ || n_tokens < 0 || n_tokens > opt_.max_ctx) return false;
+        if (n_tokens < 0 || n_tokens > opt_.max_ctx) return false;
         flush_fin();
         QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
         InkKvHdr h;
@@ -295,6 +306,7 @@ class InklingEngine final : public Engine {
         const size_t rows = (size_t)n_gslots_ * ik::NKV;
         h.payload_bytes = kv4_ ? rows * (size_t)n_tokens * (64 + 64 + 2 * sizeof(__half2) + 2 * sizeof(__half2))
                                : 2 * rows * (size_t)n_tokens * ik::HD * sizeof(__half);
+        h.payload_bytes += mtp_gkv_bytes(n_tokens);  // drafter global-layer context K/V prefix after the main KV
         out.resize(sizeof(InkKvHdr) + h.payload_bytes);
         std::memcpy(out.data(), &h, sizeof(h));
         uint8_t* p = out.data() + sizeof(h);
@@ -312,11 +324,17 @@ class InklingEngine final : public Engine {
                 QV_CUDA_CHECK(cudaMemcpy2DAsync(p + half_b, w, gv_, sp, w, rows, cudaMemcpyDeviceToHost, stream_));
             }
         }
+        if (mtp_ && n_tokens > 0) {  // drafter global-layer context K/V (layer 1), [NKV][max_ctx][HD] fp16, first n_tokens rows
+            const size_t main_b = h.payload_bytes - mtp_gkv_bytes(n_tokens);
+            const size_t w = (size_t)n_tokens * ik::HD * sizeof(__half), sp = (size_t)opt_.max_ctx * ik::HD * sizeof(__half);
+            QV_CUDA_CHECK(cudaMemcpy2DAsync(p + main_b, w, dkc_[1], sp, w, ik::NKV, cudaMemcpyDeviceToHost, stream_));
+            QV_CUDA_CHECK(cudaMemcpy2DAsync(p + main_b + (size_t)ik::NKV * w, w, dvc_[1], sp, w, ik::NKV, cudaMemcpyDeviceToHost, stream_));
+        }
         QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
         return true;
     }
     bool restore_kv_prefix(const std::vector<uint8_t>& in) override {
-        if (mtp_ || in.size() < sizeof(InkKvHdr)) return false;
+        if (in.size() < sizeof(InkKvHdr)) return false;
         InkKvHdr h;
         std::memcpy(&h, in.data(), sizeof(h));
         if (h.magic != 0x494B4B31u) return false;
@@ -324,7 +342,8 @@ class InklingEngine final : public Engine {
         const size_t rows = (size_t)n_gslots_ * ik::NKV;
         const size_t expected_payload = kv4_ ? rows * (size_t)h.n_tokens * (64 + 64 + 2 * sizeof(__half2) + 2 * sizeof(__half2))
                                              : 2 * rows * (size_t)h.n_tokens * ik::HD * sizeof(__half);
-        if (h.payload_bytes != expected_payload || in.size() != sizeof(InkKvHdr) + expected_payload) return false;
+        const size_t extra = mtp_gkv_bytes(h.n_tokens);
+        if (h.payload_bytes != expected_payload + extra || in.size() != sizeof(InkKvHdr) + expected_payload + extra) return false;
         QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
         pend_.on = false;
         const uint8_t* p = in.data() + sizeof(InkKvHdr);
@@ -341,6 +360,12 @@ class InklingEngine final : public Engine {
                 QV_CUDA_CHECK(cudaMemcpy2DAsync(gk_, dp, p, w, w, rows, cudaMemcpyHostToDevice, stream_));
                 QV_CUDA_CHECK(cudaMemcpy2DAsync(gv_, dp, p + half_b, w, w, rows, cudaMemcpyHostToDevice, stream_));
             }
+        }
+        if (mtp_ && h.n_tokens > 0) {
+            const size_t w = (size_t)h.n_tokens * ik::HD * sizeof(__half), dp = (size_t)opt_.max_ctx * ik::HD * sizeof(__half);
+            const uint8_t* q = in.data() + sizeof(InkKvHdr) + expected_payload;
+            QV_CUDA_CHECK(cudaMemcpy2DAsync(dkc_[1], dp, q, w, w, ik::NKV, cudaMemcpyHostToDevice, stream_));
+            QV_CUDA_CHECK(cudaMemcpy2DAsync(dvc_[1], dp, q + (size_t)ik::NKV * w, w, w, ik::NKV, cudaMemcpyHostToDevice, stream_));
         }
         QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
         return true;
