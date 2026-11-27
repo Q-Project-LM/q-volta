@@ -186,6 +186,33 @@ def agent_messages(repo, tok, target_tokens, task):
     return msgs
 
 
+def filler_texts():
+    """Unrelated long English technical text (Python reference topics) used as padding."""
+    import pydoc_data.topics as t
+    return [(k, t.topics[k]) for k in sorted(t.topics)]
+
+
+def pad_messages(tok, target_tokens, task):
+    """Tool-using transcript whose history is `target_tokens` of unrelated documentation (pad), ending with a self-contained task."""
+    msgs = [{"role": "system", "content": AGENT_SYSTEM},
+            {"role": "user", "content": "Before the task, read the Python reference topics I will need later."}]
+    used, k = len(tok.encode(AGENT_SYSTEM).ids) + 600, 0
+    for name, txt in filler_texts():
+        if used >= target_tokens:
+            break
+        ids = tok.encode(txt).ids
+        if used + len(ids) > target_tokens:
+            txt = txt[:int(len(txt) * (target_tokens - used) / len(ids))]
+            ids = tok.encode(txt).ids
+        k += 1
+        cid = "call_%d" % k
+        msgs.append({"role": "assistant", "content": "", "tool_calls": [{"id": cid, "type": "function", "function": {"name": "read_file", "arguments": json.dumps({"path": "pydoc/%s.txt" % name})}}]})
+        msgs.append({"role": "tool", "tool_call_id": cid, "content": txt})
+        used += len(ids) + 40
+    msgs.append({"role": "user", "content": "Thanks. Unrelated to those documents, here is the actual task: " + task})
+    return msgs
+
+
 def cell_prompt(cell, i, repo, tok):
     """(messages, tools) for generation i of a cell."""
     if cell == "short_chat":
@@ -194,6 +221,8 @@ def cell_prompt(cell, i, repo, tok):
         return [{"role": "user", "content": REASON_MATH[i % len(REASON_MATH)]}], None
     if cell == "reason_code":
         return [{"role": "user", "content": REASON_CODE[i % len(REASON_CODE)]}], None
+    if cell.startswith("padcode_") and cell.endswith("k"):  # reason_code prompts behind N K tokens of unrelated documentation
+        return pad_messages(tok, int(cell[8:-1]) * 1024, REASON_CODE[i % len(REASON_CODE)]), AGENT_TOOLS
     if cell.startswith("agent_") and cell.endswith("k"):
         tgt = int(cell[6:-1]) * 1024
         return agent_messages(repo, tok, tgt, AGENT_TASKS[i % len(AGENT_TASKS)]), AGENT_TOOLS
@@ -296,7 +325,7 @@ def cmd_run(args):
         for i in range(args.start, args.n):
             key = i % 1000
             seed = args.seed0 + i
-            idx = i % (6 if cell.startswith("agent_") else 20)
+            idx = i % (6 if cell.startswith("agent_") else 12 if cell.startswith("padcode_") else 20)
             if idx not in built:
                 built[idx] = cell_prompt(cell, idx, repo, tok)
             msgs, tools = built[idx]

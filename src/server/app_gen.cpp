@@ -898,6 +898,8 @@ GenResult App::generate(Task& t, const std::function<bool()>& alive, const std::
             const bool want_probs = t.n_probs > 0;
             bool use_chunk = o.mtp && (chunk_greedy_ok || spec_ok) && !want_probs && !t.reasoning_end;
             std::vector<int> forced;
+            bool drain_la = false;           // lazy grammar fired inside a greedy MTP lookahead whose remaining tokens the grammar accepts (see below)
+            const bool spec_was_ok = spec_ok;
             int reason_toks = 0;
             bool budget_hit = false;
             auto in_reasoning = [&]() -> bool {  // is the model currently inside its thinking block (prompt-opened or self-opened, not yet closed)?
@@ -1006,8 +1008,23 @@ GenResult App::generate(Task& t, const std::function<bool()>& alive, const std::
                     if (!mtp_gram) {
                         chunk_greedy_ok = false;
                         spec_ok = false;
+                        // The lookahead tokens after the trigger were drawn WITHOUT the grammar mask. If the grammar accepts every one of them the
+                        // masked draw would have produced the same token (an allowed global argmax is the masked argmax), so no rollback is needed:
+                        // drain the lookahead, then continue one token at a time under the mask. Engines without state_save (Inkling) would
+                        // otherwise reset and re-prefill the whole context here (a 60K-token prompt = ~43 s for a 60-token tool call).
+                        bool drain = false;
+                        if (la < lookahead.size() && t.sp.greedy() && !spec_was_ok && !std::getenv("QV_NO_DRAIN")) {
+                            grammar::GrammarState probe = gmask->state().fork();
+                            drain = true;
+                            for (size_t j = la; j < lookahead.size() && drain; ++j) drain = probe.accept_token(lookahead[j]);
+                        }
+                        if (drain) {
+                            drain_la = true;
+                            if (std::getenv("QV_MTP_DEBUG"))
+                                std::fprintf(stderr, "[qv_server] lazy grammar triggered at gen=%d (lookahead of %zu tokens grammar-valid, no rollback)\n", n, lookahead.size() - la);
+                        } else
                         use_chunk = false;
-                        if (la < lookahead.size()) {
+                        if (!drain && la < lookahead.size()) {
                             // `tk` is lookahead[la - 1], already present in cached_ at index (la_base_pos + la).
                             // Roll engine back to right after `tk` (cached_[0 .. keep_len)) and compute masked next token.
                             const size_t keep_len = la_base_pos + la + 1;
@@ -1054,10 +1071,12 @@ GenResult App::generate(Task& t, const std::function<bool()>& alive, const std::
                             continue;
                         }
                         // `tk` was either the very first token or the last token of lookahead: not yet fed into `eng`/`cached_`.
-                        if (std::getenv("QV_MTP_DEBUG"))
-                            std::fprintf(stderr, "[qv_server] lazy grammar triggered at gen=%d (no rollback)\n", n);
-                        lookahead.clear();
-                        la = 0;
+                        if (!drain) {
+                            if (std::getenv("QV_MTP_DEBUG"))
+                                std::fprintf(stderr, "[qv_server] lazy grammar triggered at gen=%d (no rollback)\n", n);
+                            lookahead.clear();
+                            la = 0;
+                        }
                     } else if (std::getenv("QV_MTP_DEBUG")) {
                         std::fprintf(stderr, "[qv_server] lazy grammar triggered inside mtp_gram at gen=%d (continuing MTP)\n", n);
                     }
@@ -1065,6 +1084,9 @@ GenResult App::generate(Task& t, const std::function<bool()>& alive, const std::
                 // ---- next token
                 if (use_chunk) {
                     if (la < lookahead.size()) { tk = lookahead[la++]; continue; }
+                    if (drain_la) { drain_la = false; use_chunk = false; lookahead.clear(); la = 0; }  // lookahead consumed: tk is its last token, not yet fed
+                }
+                if (use_chunk) {
                     int room = std::min(mtp_chunk, n_ctx - (int)cached_.size());
                     if (budget >= 0) room = std::min(room, budget - n);
                     if (room >= 2) {
