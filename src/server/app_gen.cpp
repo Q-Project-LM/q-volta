@@ -1016,7 +1016,15 @@ GenResult App::generate(Task& t, const std::function<bool()>& alive, const std::
                         if (la < lookahead.size() && t.sp.greedy() && !spec_was_ok && !std::getenv("QV_NO_DRAIN")) {
                             grammar::GrammarState probe = gmask->state().fork();
                             drain = true;
-                            for (size_t j = la; j < lookahead.size() && drain; ++j) drain = probe.accept_token(lookahead[j]);
+                            for (size_t j = la; j < lookahead.size() && drain; ++j) {
+                                drain = probe.accept_token(lookahead[j]);
+                                if (!drain && std::getenv("QV_MTP_DEBUG")) {
+                                    std::string pre;
+                                    for (size_t q2 = la; q2 <= j; ++q2) pre += tok.token_bytes(lookahead[q2]) + (q2 == j ? "  <-- rejected" : "");
+                                    std::fprintf(stderr, "[qv_server] lookahead token %zu/%zu rejected by the grammar: %s\n", j - la, lookahead.size() - la, pre.c_str());
+                                }
+                                if (std::find(stop_ids.begin(), stop_ids.end(), lookahead[j]) != stop_ids.end()) break;  // tokens after a stop token are never consumed
+                            }
                         }
                         if (drain) {
                             drain_la = true;
