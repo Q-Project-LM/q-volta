@@ -63,6 +63,9 @@ void App::set_sequences(bool multi) {
     slot_busy_.assign(n_slots, 0);
     slot_used_.assign(n_slots, 0);
     slot_cached_.assign(multi_seq ? n_slots : 1, std::vector<int>());
+    slot_ckpts_.assign(multi_seq ? n_slots : 1, {});
+    slot_cacheable_.assign(multi_seq ? n_slots : 1, 0);
+    parked_pool_.clear();
 }
 
 Value App::model_json() const {
@@ -345,6 +348,9 @@ void App::handle_slot_action(const http::Request& req, http::Conn& c, int id) {
         long n = (long)cached_.size();
         { EngTurn tn(*this, id); eng->reset(); }
         cached_.clear();
+        ckpts_of(id).clear();
+        slot_cacheable_[seq_of(id)] = 0;
+        if (!multi_seq) parked_pool_.clear();
         r.set("n_erased", n);
     } else if (action == "save") {
         for (int c : cached_) if (c < 0) throw_error(400, "Unable to save slot: it holds image tokens (images are not serialised)");
@@ -377,11 +383,13 @@ void App::handle_slot_action(const http::Request& req, http::Conn& c, int id) {
         std::fclose(f);
         { EngTurn tn(*this, id); eng->reset(); }
         cached_.clear();
+        ckpts_of(id).clear();
         for (size_t off = 0; off < toks.size(); off += chunk) {
             int k = (int)std::min<size_t>(chunk, toks.size() - off);
             { EngTurn tn(*this, id); eng->prefill(toks.data() + off, k, (int)off); }
             cached_.insert(cached_.end(), toks.begin() + off, toks.begin() + off + k);
         }
+        slot_cacheable_[seq_of(id)] = 1;
         r.set("filename", fn);
         r.set("n_restored", n);
         r.set("n_read", 12 + 4 * (long)n);
@@ -627,6 +635,9 @@ void App::ensure_engine() {
     eng = reload_engine();
     eng->sync();
     for (auto& c : slot_cached_) c.clear();
+    for (auto& v : slot_ckpts_) v.clear();
+    for (auto& b : slot_cacheable_) b = 0;
+    parked_pool_.clear();
     sleeping = false;
     std::fprintf(stderr, "[qv_server] model reloaded in %.1fs\n", std::chrono::duration<double>(Clock::now() - t0).count());
 }
@@ -652,6 +663,9 @@ void App::start_sleep_watcher() {
                     std::fprintf(stderr, "[qv_server] server is entering sleeping state (idle for %d s): model unloaded\n", o.sleep_idle_seconds);
                     eng.reset();
                     for (auto& c : slot_cached_) c.clear();
+                    for (auto& v : slot_ckpts_) v.clear();
+                    for (auto& b : slot_cacheable_) b = 0;
+                    parked_pool_.clear();
                     sleeping = true;
                 }
             }
@@ -686,6 +700,9 @@ void App::unload_model() {
         matchers_.clear();
     }
     for (auto& c : slot_cached_) c.clear();
+    for (auto& v : slot_ckpts_) v.clear();
+    for (auto& b : slot_cacheable_) b = 0;
+    parked_pool_.clear();
     tok = Tokenizer();
     model_id.clear();
     model_template.clear();
@@ -839,7 +856,8 @@ void App::load_model(const Options& mo_in, const std::string& forced_id) {
         eo.threads = o.threads > 0 ? o.threads : (int)std::min(32u, std::max(1u, std::thread::hardware_concurrency()));
         chunk = o.prefill_chunk > 0 ? o.prefill_chunk : (o.ubatch > 0 ? o.ubatch : (backend == "cuda" ? 2048 : 256));
         eo.prefill_chunk = chunk;
-        mtp_chunk = 8;
+        mtp_chunk = (backend == "cuda") ? 16 : 8;
+        if (const char* e = std::getenv("QV_MTP_CHUNK")) mtp_chunk = std::clamp(std::atoi(e), 2, 64);
         if (const char* e = std::getenv("QV_SHARED_CHUNK")) shared_chunk = std::max(1, std::atoi(e));
 
         Options mo = o;

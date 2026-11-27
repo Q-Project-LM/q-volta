@@ -56,11 +56,25 @@ dequantises into the WMMA tile. `--kv int4|fp16`.
   scratch leave ~5.2 GiB and 9216 B/token. 256K uses 2.4 GiB of KV.
 - fp16 KV: 131K needs 14.4 GiB of 15.77 (tight); 256K does not fit.
 - Prefill is quadratic: attention dominates beyond ~16K (see table in PERFORMANCE.md).
-- Decode attention at long context is 2-3x above its own HBM bound (256K: 17.4 ms/token vs 8.2 ms at 4K; the int4 KV read is 2.4 GB = 2.7 ms at 900 GB/s).
+- Decode attention at long context is 2-3x above its own HBM bound (256K: 14.5 ms/token after p30, 17.4 before, vs 8.2 ms at 4K; the int4 KV read is 2.4 GB = 2.7 ms at 900 GB/s).
 - The pi (harness-hub) LoRA is not implemented in this engine; the plan (merge before quantisation) needs no engine change. Stage B on ARM is not addressed here.
+
+## Long context (p30/longctx, 2026-11-27)
+- Checkpoints with MTP: `save_checkpoint` appends the drafter's local-layer context rings (K,V fp16 x 1024 slots, 2 layers) and the recurrent-head feature; `save_kv_prefix` appends the drafter's global-layer
+  context K/V prefix (NKV x n x 128 fp16 x 2). Tested by `tests/test_ink_ckpt.cpp` (ids, logits and acceptance counts identical after L1 / L2 restore).
+- Decode attention (`k_attn_part`): the int4 loader fetches the next key before consuming the current one; the MTP rows launch is grid (NKV*rows, nsplit) so the rows of one split are adjacent (share K/V through L2).
+  The kernel is instruction bound at long context (~340 instructions per key and lane, 128 of them nibble dequant): 85K single row 300 us/layer, R=4 919 us/layer. Bit-identical to the previous kernel.
+- Prefill attention: `k_attn_pf3` shares each K/V tile between the 3 query heads of a kv head (12 warps per block, 97 KB shared memory): 111 -> 88 ms per 2048-token chunk at 63K, bit-identical (`QV_PF1=1` = old kernel).
+  Attention is 48 % of the 85K prefill; the rest is dominated by per-chunk expert dequant + GEMM, which a larger `--prefill-chunk` amortises (32K prompt: 17.8 s at 2048, 11.8 s at 8192).
+- Chunk-boundary dependence: prefilling a prompt whole vs in two pieces gives different logits (cuBLAS shapes), hence the grid-aligned checkpoints in docs/SERVER.md.
 
 ## Correctness
 See PERFORMANCE.md. Quantised-reference goldens (`/tmp/ink/qg`, from the CPU Q3A5 reference) and the fp goldens in `tests/golden/inkling`.
 
 ## Sequences (p24/multiseq)
 `EngineOptions::n_seq = N` allocates N copies of the per-sequence state: local-attention rings, global KV (fp16 or int4), conv states of k/v/attn/mlp, logits, token/position buffer, argmax history and the CUDA graphs (captured lazily per sequence, they bake in the sequence's pointers). Weights, scratch, prefill buffers and cuBLAS state are shared: every step / prefill chunk fully rewrites the scratch it reads, so a sequence switch (`select_seq`) is pointer bookkeeping only (no copy, no sync) and results are bit-identical to running alone (tests/test_multiseq.cpp). Per extra sequence: 0.19 GiB + 9216 B x max_ctx (int4 KV) (see docs/PERFORMANCE.md). MTP keeps single-sequence drafter state (n_seq > 1 with MTP throws).
+
+## Speculative verify (p29/spec-speed)
+- `decode_speculative` (T > 0, lossless) and `decode_speculative_constrained` are implemented in `cuda_inkling_mtp.inc`; see INKLING_MTP.md section 11.
+- Verify rows kernels: `k_w2_g` is expert-grouped over the union of routed experts (4 rows per warp, per-row arithmetic order unchanged), `k_w13_u` and `k_w2_g` use `warp_reduce4` (6 shuffles for 4 rows,
+  xor-tree order 16,8,4,2,1 kept). Bit-identical to the 1-row kernels. Verify R = 4 is bandwidth-bound on the union (about 28-32 experts, about 4.4 MB per expert per application), floor about 8.7 ms for MoE.

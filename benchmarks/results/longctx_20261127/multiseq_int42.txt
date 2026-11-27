@@ -1,0 +1,11 @@
+mode=greedy engine n_seq=4 state 0.78 GiB weights 9.89 GiB
+  prompt 0 (len 37) on slot 0: ids IDENTICAL, per-step logits BIT-IDENTICAL, final logits BIT-IDENTICAL (max|d|=0), 48 steps
+  prompt 1 (len 150) on slot 1: ids IDENTICAL, per-step logits BIT-IDENTICAL, final logits BIT-IDENTICAL (max|d|=0), 48 steps
+  prompt 3 (len 2600) on slot 3: ids IDENTICAL, per-step logits BIT-IDENTICAL, final logits BIT-IDENTICAL (max|d|=0), 48 steps
+  prompt 4 (len 64) on slot 2: ids IDENTICAL, per-step logits BIT-IDENTICAL, final logits BIT-IDENTICAL (max|d|=0), 48 steps
+mode=sampled engine n_seq=4 state 0.78 GiB weights 9.89 GiB
+  prompt 0 (len 37) on slot 0: ids IDENTICAL, per-step logits BIT-IDENTICAL, final logits BIT-IDENTICAL (max|d|=0), 48 steps
+  prompt 1 (len 150) on slot 1: ids IDENTICAL, per-step logits BIT-IDENTICAL, final logits BIT-IDENTICAL (max|d|=0), 48 steps
+  prompt 3 (len 2600) on slot 3: ids IDENTICAL, per-step logits BIT-IDENTICAL, final logits BIT-IDENTICAL (max|d|=0), 48 steps
+  prompt 4 (len 64) on slot 2: ids IDENTICAL, per-step logits BIT-IDENTICAL, final logits BIT-IDENTICAL (max|d|=0), 48 steps
+PASS

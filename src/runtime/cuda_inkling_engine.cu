@@ -176,6 +176,27 @@ class InklingEngine final : public Engine {
         QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
     }
 
+    bool has_speculative_decode() const override { return mtp_ && opt_.mtp; }
+    void decode_speculative(int first, int start_pos, int n, const SpecSamplingParams& sp, std::vector<int>& out) override {
+        if (!(mtp_ && opt_.mtp)) throw std::runtime_error("this engine does not support speculative sampling");
+        QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
+        mtp_decode_spec(first, start_pos, n, sp, out);
+    }
+
+    bool has_constrained_mtp() const override { return mtp_ && opt_.mtp; }
+    void decode_speculative_constrained(int first, int start_pos, int n, const SpecSamplingParams& sp, std::vector<int>& out, TokenConstraint* tc) override {
+        if (!(mtp_ && opt_.mtp)) throw std::runtime_error("this engine does not support speculative sampling");
+        QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
+        mtp_decode_spec(first, start_pos, n, sp, out, tc);
+    }
+    void decode_greedy_constrained(int first, int start_pos, int n, std::vector<int>& out, TokenConstraint* tc) override {
+        if (!tc || !(mtp_ && opt_.mtp)) { decode_greedy(first, start_pos, n, out, false); return; }
+        SpecSamplingParams g;  // temperature 0: the constrained distribution is a point mass on the best allowed token
+        g.temperature = 0.0f;
+        QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
+        mtp_decode_spec(first, start_pos, n, g, out, tc);
+    }
+
     int argmax() override {
         argmax_advance(logits_, cfg_.ink.unpadded_vocab, d_arg_, nullptr, nullptr, stream_);
         int r;
@@ -196,6 +217,179 @@ class InklingEngine final : public Engine {
         QV_CUDA_CHECK(cudaMemset(cst_m_, 0, (size_t)48 * 3 * ik::H * 4));
         QV_CUDA_CHECK(cudaMemset(ticket_, 0, 4));
         QV_CUDA_CHECK(cudaDeviceSynchronize());
+    }
+    bool has_checkpoint() const override { return true; }
+    // MTP drafter state that is NOT append-only: the two local-layer context rings (K and V, fp16, 1024 slots) and the recurrent head feature.
+    // The drafter's global-layer context K/V is append-only like the main global KV (kept in VRAM for L1, saved by save_kv_prefix for L2).
+    size_t mtp_ring_bytes() const { return mtp_ ? 4 * (size_t)ik::NKV * 1024 * ik::HD * sizeof(__half) + (size_t)ik::H * sizeof(float) : 0; }
+    size_t mtp_gkv_bytes(int n_tokens) const { return mtp_ ? 2 * (size_t)ik::NKV * (size_t)n_tokens * ik::HD * sizeof(__half) : 0; }
+    bool save_checkpoint(std::vector<uint8_t>& out) override {
+        struct InkCkptHdr {
+            uint32_t magic = 0x494B4331u;
+            uint64_t lkv_b = 0, cstk_b = 0, csta_b = 0, logits_b = 0;
+        };
+        flush_fin();
+        QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
+        InkCkptHdr h;
+        h.lkv_b = (size_t)n_lslots_ * ik::NKV * 1024 * ik::HD * sizeof(__half);
+        h.cstk_b = (size_t)48 * 3 * 1024 * sizeof(float);
+        h.csta_b = (size_t)48 * 3 * ik::H * sizeof(float);
+        h.logits_b = (size_t)cfg_.vocab * sizeof(float);
+        const size_t tot = sizeof(InkCkptHdr) + 2 * h.lkv_b + 2 * h.cstk_b + 2 * h.csta_b + h.logits_b + mtp_ring_bytes();
+        out.resize(tot);
+        uint8_t* p = out.data();
+        std::memcpy(p, &h, sizeof(h));
+        p += sizeof(h);
+        auto get = [&](const void* src, size_t b) {
+            if (b > 0) QV_CUDA_CHECK(cudaMemcpy(p, src, b, cudaMemcpyDeviceToHost));
+            p += b;
+        };
+        get(lk_, h.lkv_b);
+        get(lv_, h.lkv_b);
+        get(cst_k_, h.cstk_b);
+        get(cst_v_, h.cstk_b);
+        get(cst_a_, h.csta_b);
+        get(cst_m_, h.csta_b);
+        get(logits_, h.logits_b);
+        if (mtp_) {
+            const size_t rb = (size_t)ik::NKV * 1024 * ik::HD * sizeof(__half);
+            get(dkc_[0], rb); get(dvc_[0], rb); get(dkc_[2], rb); get(dvc_[2], rb);
+            get(f_rnn_, (size_t)ik::H * sizeof(float));
+        }
+        return true;
+    }
+    bool restore_checkpoint(const std::vector<uint8_t>& in) override {
+        struct InkCkptHdr {
+            uint32_t magic = 0x494B4331u;
+            uint64_t lkv_b = 0, cstk_b = 0, csta_b = 0, logits_b = 0;
+        };
+        if (in.size() < sizeof(InkCkptHdr)) return false;
+        InkCkptHdr h;
+        std::memcpy(&h, in.data(), sizeof(h));
+        if (h.magic != 0x494B4331u) return false;
+        const size_t lkv_b = (size_t)n_lslots_ * ik::NKV * 1024 * ik::HD * sizeof(__half);
+        const size_t cstk_b = (size_t)48 * 3 * 1024 * sizeof(float);
+        const size_t csta_b = (size_t)48 * 3 * ik::H * sizeof(float);
+        const size_t logits_b = (size_t)cfg_.vocab * sizeof(float);
+        if (h.lkv_b != lkv_b || h.cstk_b != cstk_b || h.csta_b != csta_b || h.logits_b != logits_b) return false;
+        const size_t tot = sizeof(InkCkptHdr) + 2 * lkv_b + 2 * cstk_b + 2 * csta_b + logits_b + mtp_ring_bytes();
+        if (in.size() != tot) return false;
+        QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
+        pend_.on = false;
+        const uint8_t* p = in.data() + sizeof(InkCkptHdr);
+        auto put = [&](void* dst, size_t b) {
+            if (b > 0) QV_CUDA_CHECK(cudaMemcpy(dst, p, b, cudaMemcpyHostToDevice));
+            p += b;
+        };
+        put(lk_, lkv_b);
+        put(lv_, lkv_b);
+        put(cst_k_, cstk_b);
+        put(cst_v_, cstk_b);
+        put(cst_a_, csta_b);
+        put(cst_m_, csta_b);
+        put(logits_, logits_b);
+        if (mtp_) {
+            const size_t rb = (size_t)ik::NKV * 1024 * ik::HD * sizeof(__half);
+            put(dkc_[0], rb); put(dvc_[0], rb); put(dkc_[2], rb); put(dvc_[2], rb);
+            put(f_rnn_, (size_t)ik::H * sizeof(float));
+        }
+        QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
+        return true;
+    }
+    struct InkKvHdr {
+        uint32_t magic = 0x494B4B31u;  // "IKK1"
+        int32_t kv4 = 0, n_gslots = 0, n_tokens = 0;
+        uint64_t payload_bytes = 0;
+    };
+    size_t checkpoint_bytes() const override {
+        const size_t lkv_b = (size_t)n_lslots_ * ik::NKV * 1024 * ik::HD * sizeof(__half);
+        const size_t cstk_b = (size_t)48 * 3 * 1024 * sizeof(float);
+        const size_t csta_b = (size_t)48 * 3 * ik::H * sizeof(float);
+        const size_t logits_b = (size_t)cfg_.vocab * sizeof(float);
+        return 40 + 2 * lkv_b + 2 * cstk_b + 2 * csta_b + logits_b + mtp_ring_bytes();  // sizeof(InkCkptHdr) == 40
+    }
+    bool has_kv_checkpoint() const override { return true; }
+    size_t kv_checkpoint_bytes(int n_tokens) const override {
+        if (n_tokens < 0 || n_tokens > opt_.max_ctx) return 0;
+        const size_t rows = (size_t)n_gslots_ * ik::NKV;
+        const size_t payload = kv4_ ? rows * (size_t)n_tokens * (64 + 64 + 2 * sizeof(__half2) + 2 * sizeof(__half2))
+                                    : 2 * rows * (size_t)n_tokens * ik::HD * sizeof(__half);
+        return sizeof(InkKvHdr) + payload + mtp_gkv_bytes(n_tokens);
+    }
+    bool save_kv_prefix(std::vector<uint8_t>& out, int n_tokens) override {
+        if (n_tokens < 0 || n_tokens > opt_.max_ctx) return false;
+        flush_fin();
+        QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
+        InkKvHdr h;
+        h.kv4 = kv4_ ? 1 : 0;
+        h.n_gslots = n_gslots_;
+        h.n_tokens = n_tokens;
+        const size_t rows = (size_t)n_gslots_ * ik::NKV;
+        h.payload_bytes = kv4_ ? rows * (size_t)n_tokens * (64 + 64 + 2 * sizeof(__half2) + 2 * sizeof(__half2))
+                               : 2 * rows * (size_t)n_tokens * ik::HD * sizeof(__half);
+        h.payload_bytes += mtp_gkv_bytes(n_tokens);  // drafter global-layer context K/V prefix after the main KV
+        out.resize(sizeof(InkKvHdr) + h.payload_bytes);
+        std::memcpy(out.data(), &h, sizeof(h));
+        uint8_t* p = out.data() + sizeof(h);
+        if (n_tokens > 0 && rows > 0) {
+            if (kv4_) {
+                const size_t q_w = (size_t)n_tokens * 64, q_sp = (size_t)opt_.max_ctx * 64, q_b = rows * q_w;
+                const size_t s_w = (size_t)n_tokens * 2 * sizeof(__half2), s_sp = (size_t)opt_.max_ctx * 2 * sizeof(__half2), s_b = rows * s_w;
+                QV_CUDA_CHECK(cudaMemcpy2DAsync(p, q_w, gkq_, q_sp, q_w, rows, cudaMemcpyDeviceToHost, stream_));
+                QV_CUDA_CHECK(cudaMemcpy2DAsync(p + q_b, q_w, gvq_, q_sp, q_w, rows, cudaMemcpyDeviceToHost, stream_));
+                QV_CUDA_CHECK(cudaMemcpy2DAsync(p + 2 * q_b, s_w, gks_, s_sp, s_w, rows, cudaMemcpyDeviceToHost, stream_));
+                QV_CUDA_CHECK(cudaMemcpy2DAsync(p + 2 * q_b + s_b, s_w, gvs_, s_sp, s_w, rows, cudaMemcpyDeviceToHost, stream_));
+            } else {
+                const size_t w = (size_t)n_tokens * ik::HD * sizeof(__half), sp = (size_t)opt_.max_ctx * ik::HD * sizeof(__half), half_b = rows * w;
+                QV_CUDA_CHECK(cudaMemcpy2DAsync(p, w, gk_, sp, w, rows, cudaMemcpyDeviceToHost, stream_));
+                QV_CUDA_CHECK(cudaMemcpy2DAsync(p + half_b, w, gv_, sp, w, rows, cudaMemcpyDeviceToHost, stream_));
+            }
+        }
+        if (mtp_ && n_tokens > 0) {  // drafter global-layer context K/V (layer 1), [NKV][max_ctx][HD] fp16, first n_tokens rows
+            const size_t main_b = h.payload_bytes - mtp_gkv_bytes(n_tokens);
+            const size_t w = (size_t)n_tokens * ik::HD * sizeof(__half), sp = (size_t)opt_.max_ctx * ik::HD * sizeof(__half);
+            QV_CUDA_CHECK(cudaMemcpy2DAsync(p + main_b, w, dkc_[1], sp, w, ik::NKV, cudaMemcpyDeviceToHost, stream_));
+            QV_CUDA_CHECK(cudaMemcpy2DAsync(p + main_b + (size_t)ik::NKV * w, w, dvc_[1], sp, w, ik::NKV, cudaMemcpyDeviceToHost, stream_));
+        }
+        QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
+        return true;
+    }
+    bool restore_kv_prefix(const std::vector<uint8_t>& in) override {
+        if (in.size() < sizeof(InkKvHdr)) return false;
+        InkKvHdr h;
+        std::memcpy(&h, in.data(), sizeof(h));
+        if (h.magic != 0x494B4B31u) return false;
+        if (h.kv4 != (kv4_ ? 1 : 0) || h.n_gslots != n_gslots_ || h.n_tokens < 0 || h.n_tokens > opt_.max_ctx) return false;
+        const size_t rows = (size_t)n_gslots_ * ik::NKV;
+        const size_t expected_payload = kv4_ ? rows * (size_t)h.n_tokens * (64 + 64 + 2 * sizeof(__half2) + 2 * sizeof(__half2))
+                                             : 2 * rows * (size_t)h.n_tokens * ik::HD * sizeof(__half);
+        const size_t extra = mtp_gkv_bytes(h.n_tokens);
+        if (h.payload_bytes != expected_payload + extra || in.size() != sizeof(InkKvHdr) + expected_payload + extra) return false;
+        QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
+        pend_.on = false;
+        const uint8_t* p = in.data() + sizeof(InkKvHdr);
+        if (h.n_tokens > 0 && rows > 0) {
+            if (kv4_) {
+                const size_t q_w = (size_t)h.n_tokens * 64, q_dp = (size_t)opt_.max_ctx * 64, q_b = rows * q_w;
+                const size_t s_w = (size_t)h.n_tokens * 2 * sizeof(__half2), s_dp = (size_t)opt_.max_ctx * 2 * sizeof(__half2), s_b = rows * s_w;
+                QV_CUDA_CHECK(cudaMemcpy2DAsync(gkq_, q_dp, p, q_w, q_w, rows, cudaMemcpyHostToDevice, stream_));
+                QV_CUDA_CHECK(cudaMemcpy2DAsync(gvq_, q_dp, p + q_b, q_w, q_w, rows, cudaMemcpyHostToDevice, stream_));
+                QV_CUDA_CHECK(cudaMemcpy2DAsync(gks_, s_dp, p + 2 * q_b, s_w, s_w, rows, cudaMemcpyHostToDevice, stream_));
+                QV_CUDA_CHECK(cudaMemcpy2DAsync(gvs_, s_dp, p + 2 * q_b + s_b, s_w, s_w, rows, cudaMemcpyHostToDevice, stream_));
+            } else {
+                const size_t w = (size_t)h.n_tokens * ik::HD * sizeof(__half), dp = (size_t)opt_.max_ctx * ik::HD * sizeof(__half), half_b = rows * w;
+                QV_CUDA_CHECK(cudaMemcpy2DAsync(gk_, dp, p, w, w, rows, cudaMemcpyHostToDevice, stream_));
+                QV_CUDA_CHECK(cudaMemcpy2DAsync(gv_, dp, p + half_b, w, w, rows, cudaMemcpyHostToDevice, stream_));
+            }
+        }
+        if (mtp_ && h.n_tokens > 0) {
+            const size_t w = (size_t)h.n_tokens * ik::HD * sizeof(__half), dp = (size_t)opt_.max_ctx * ik::HD * sizeof(__half);
+            const uint8_t* q = in.data() + sizeof(InkKvHdr) + expected_payload;
+            QV_CUDA_CHECK(cudaMemcpy2DAsync(dkc_[1], dp, q, w, w, ik::NKV, cudaMemcpyHostToDevice, stream_));
+            QV_CUDA_CHECK(cudaMemcpy2DAsync(dvc_[1], dp, q + (size_t)ik::NKV * w, w, w, ik::NKV, cudaMemcpyHostToDevice, stream_));
+        }
+        QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
+        return true;
     }
     const std::vector<float>& hidden_dump() const override { return hidden_; }
     const std::vector<float>& logits_dump() const override { return logits_dump_; }

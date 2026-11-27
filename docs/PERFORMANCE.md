@@ -241,3 +241,35 @@ TTFT of a short (~100-token) request that arrives 1 s into a 30K-token prompt of
 Memory per extra slot: 0.19 GiB fixed (local-attention rings 0.16 GiB + conv states, logits, token buffers) + 9216 B per context token (int4 KV): Inkling at 40960 tokens/slot = 0.19 + 0.35 = 0.54 GiB; the whole 4-slot server at 163840 total tokens used 13.16 GiB on the V100 (production single sequence at 131072: 13.41 GiB incl. vision).
 Exactness (tests/test_multiseq.cpp, ids + logits at EVERY step): 4 prompts (37 / 150 / 2600 / 64 tokens) decoded interleaved on one n_seq=4 engine with a late-joining sequence (round 10) and an aborted + re-used slot (step 15), greedy and fixed-seed sampling: every sequence is bit-identical to the same prompt run alone on a single-sequence engine. Inkling int4 KV (48 steps), Inkling fp16 KV (24 steps), Qwen3.8-27B e1 int4 KV (40 steps): all PASS. CPU engines (Inkling, Qwen): the multi-sequence code compiles and an 18-step interleaved test on Inkling CPU was bit-identical, but a 6-step variant showed one sequence differing from the alone run and was NOT resolved (cause not found: possibly leftover state of the alone-reference engine rather than the sequence switch; a fresh-engine reference run was aborted by the owner). CPU multi-sequence is therefore UNVERIFIED; CPU Qwen was not run at all.
 Not done (phase 2, true batched decode): one forward over B sequences needs per-row attention against each sequence's own KV (split-K with a sequence table), union-of-experts MoE GEMV with per-row routing, per-sequence loop/sconv state and graphs per B. Estimated upside is bounded by the MoE: at B=4 up to 32 experts per layer are read instead of 8, the dense part (attention projections, router, head) is shared; not measured, so no number is claimed. llama.cpp (continuous batching) reaches higher aggregate throughput by design; no llama.cpp comparison was measured here (no GGUF of this model, models deleted).
+
+## Long context (p30/longctx, 2026-11-27)
+V100 shared with other agents (kernel numbers have a few % noise), Q3A5, int4 KV. Dev = e0c600b. Raw logs: benchmarks/results/longctx_20261127/.
+**Agent-turn replay** (`benchmarks/longctx_replay.py replay`: two interleaved sessions, 60K-token initial document, 3 turns each, tool-call shaped turns of 50-500 new tokens, reasoning on, greedy, 96 new tokens, `--parallel 1`, single run each):
+| build | hits (turns after the first) | turn wall time | prefill per turn |
+|---|---|---|---|
+| dev, `--mtp` | 0/4 | 41.8-42.9 s (one 84.8 s) | 60.6K tokens at 1.46-1.50K tok/s |
+| p30, `--mtp` | 4/4 | median 4.06 s (3.3-4.15; park 1.0-1.7 s + restore 0.2 s + 1.0-1.3 s prefill) | 0.9-1.6K tokens |
+| p30, `--mtp`, one session | 4/4 | 1.7-2.1 s (earlier build, N-16 cut) | |
+| dev, no `--mtp`, `--parallel 1` | 4/4 | median 2.8 s | |
+| dev / p30, no `--mtp`, `--parallel 2`, 40K | 4/4 / 4/4 | median 1.7 s / 2.2 s (grid-aligned cut) | |
+Root cause: `has_checkpoint()` was `!mtp_`. Cached == uncached replies (verify mode, 7K tokens, 2 sessions x 3 turns): identical 6/6 with and without `--mtp` (needs `--checkpoint-align`; with the N-16 cut 1 of 6 differed).
+**Decode tok/s versus context, engine level** (`qv_ink --bench --synth-ctx`, plain greedy, 3 runs each, spread <0.2 %; dev -> p30): 4K 126.4 -> 125.7, 16K 119.3 -> 120.9, 32K 111.5 -> 115.2, 64K 98.5 -> 104.3, 85K 92.5 -> 99.1, 131K 81.9 -> 89.8, 200K 69.4 -> 76.5, 262K 60.4 -> 69.1
+(bit-identical ids/logits to dev: `tests/test_ink_exact.cpp`, 6 prompts up to 85K).
+**Server level, `--mtp`, real prompts, reasoning on, 128 new tokens, single run** (dev -> p30): decode 4K 126.5 -> 126.4, 16K 125.4 -> 128.6, 32K 108.3 -> 113.5, 64K 104.1 -> 112.5, 85K 74.1 -> 81.4 tok/s (content dependent: acceptance);
+prefill 4K 1651 -> 1655, 16K 1867 -> 1899, 32K 1706 -> 1755, 64K 1439 -> 1525, 85K 1301 -> 1399 tok/s (chunk 2048). At 85K plain decode (99 engine) is still faster than MTP (81): the verify rows kernel `attn_part_rows` costs
+about 7.3 ms per R=4 cycle at 85K (microbench, tests/bench_attn_long.cu) because it is instruction bound (per-row dequant + softmax), not bandwidth bound; sharing the dequant between rows needs >255 registers (open).
+**Kernels** (microbench, us per layer call at 85K, bit-identical output): decode attention 1 row 394 -> 300, R=4 rows 1151 -> 919; prefill attention (chunk 2048 at 63K) 111.3 -> 88.3 ms, at 83K 145.7 -> 114.6 ms.
+Rejected (exact but slower): q in shared memory, forced 4-5 blocks/SM, magic-number nibble convert, skipping the softmax rescale. Profile (nsys, 85K prompt): k_attn_pf = 48 % of prefill kernel time, per-chunk weight dequant 9.6 %.
+**Prefill chunk** (qv_ink, 32768 tokens): 2048 17.81 s, 4096 14.06 s (-21 %), 8192 11.78 s (-34 %) with the shared-tile kernel (1-head kernel: 18.11 / 15.07 / 12.93 s). Numerics differ between chunk sizes (not bit-identical to 2048); `--prefill-chunk 8192`
+ran out of memory in the server at `--mtp --ctx-size 131072`. Server replay with `--prefill-chunk 4096` (--mtp, 2 x 60K): cold prefill 31 s instead of 39 s (1.96-1.99K tok/s), but the grid-aligned checkpoint re-prefills up to 4096 tokens per turn, so the median turn is 5.1 s instead of 4.1 s: a bigger chunk helps cold prompts, not turn latency. Default left at 2048.
+**C4 (max usable context)**: engine decode at position 262,024 over synthetic KV fits (12.61 / 15.77 GiB, 69.1 tok/s); 131K 11.49 GiB. Real prompts were prefilled only up to 85K (prefill 60.7 s through the server); no NIAH/ppl at 128K-256K was run here, so no quality claim above 85K.
+## Inkling speculative sampling at T = 1.0 (p29/spec-speed, 2026-11-27)
+qv_server, defaults top_k 40 / top_p 0.95 / min_p 0.05, ctx 25, 256 tokens, 3 runs, decode tok/s, dev (e0c600b) vs p29 binary measured back to back (V100, int4 KV):
+
+| class | dev --mtp | p29 --mtp | dev no MTP | p29 no MTP |
+|---|---|---|---|---|
+| code | 104.5 | 130.3 | 106.4 | 107.0 |
+| prose | 104.0 | 130.6 | 104.7 | 105.2 |
+| tool (p29 with --mtp-grammar) | 108.9 | 171.0 (146-188) | 110.5 | 111.0 |
+
+Distance to 200: code 1.5x, prose 1.5x. A verify cycle is about 17 ms (MoE union floor about 8.7 ms) and yields 2.4-2.6 tokens; a sampled plain step is about 7.7 ms (130 tok/s).

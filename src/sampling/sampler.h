@@ -71,6 +71,24 @@ struct SamplingParams {
     bool has_penalties() const { return presence_penalty != 0 || frequency_penalty != 0 || repeat_penalty != 1.0f || dry_multiplier > 0; }
     // True when the engine's own argmax() gives the answer (no host logits needed).
     bool engine_argmax_ok() const { return greedy() && !has_penalties() && logit_bias.empty(); }
+    // True when Engine::decode_speculative matches Sampler's filter & temperature chain.
+    bool speculative_ok() const {
+        if (mirostat != 0 || has_penalties() || !logit_bias.empty()) return false;
+        if (typical_p < 1.0f || top_n_sigma > 0.0f || xtc_probability > 0.0f || dynatemp_range > 0.0f) return false;
+        int prev_stage = -1;
+        for (const auto& s : samplers) {
+            int stage = -1;
+            if (s == "top_k" && top_k > 0) stage = 0;
+            else if (s == "top_p" && top_p < 1.0f) stage = 1;
+            else if (s == "min_p" && min_p > 0.0f) stage = 2;
+            else if (s == "temperature") stage = 3;
+            if (stage >= 0) {
+                if (stage < prev_stage) return false;
+                prev_stage = stage;
+            }
+        }
+        return true;
+    }
 };
 
 struct TokenLogprob {
@@ -94,6 +112,7 @@ class Sampler {
     // Probability of `tok` after the whole chain (llama post_sampling_probs); valid after sample().
     float last_prob(int tok) const;
     const std::vector<std::pair<int, float>>& last_candidates() const { return last_cands_; }  // (id, p) after the chain, sorted desc
+    uint64_t next_seed() { return ((uint64_t)rng_() << 32) ^ (uint64_t)rng_(); }
 
    private:
     struct Cand { int id; float logit; float p; };
@@ -109,6 +128,7 @@ class Sampler {
     void apply_dry(std::vector<float>& lg) const;
     void softmax();
     void sort_desc();
+    void keep_best_one();
     void s_top_k(int k);
     void s_top_p(float p);
     void s_min_p(float p);

@@ -73,6 +73,19 @@ The recurrent state cannot be rewound, so an identical repeated prompt is re-eva
 A request that hits `max_tokens` (or the context) while still inside the thinking block returns `finish_reason: "length"`, `content: ""` and the text so far in `reasoning_content` (streaming: `reasoning_content` deltas then a final chunk with `finish_reason: "length"`), the same shape as llama-server with `--reasoning-format deepseek`. Clients that only read `content` (some agent UIs show "the model ended its turn without producing any output") must handle that case or raise `max_tokens`.
 `--reasoning-budget N` (llama-server flag, `LLAMA_ARG_THINK_BUDGET`) with N > 0 closes the thinking block after N reasoning tokens by forcing the end marker (`\n</think>\n\n`; Inkling: `<|end_message|><|message_model|><|content_text|>`), optionally preceded by `--reasoning-budget-message`; 0 disables thinking, -1 (default) is unlimited. The Inkling closing sequence is built from the message grammar in docs/INKLING_SPEC.md and was tested on the mock backend only.
 
+## Prompt cache and checkpoints at long context (p30/longctx, 2026-11-27)
+Chat templates re-render the previous assistant turn (Inkling drops its reasoning), so a literal "cached tokens are a prefix of the prompt" match almost never hits in agent traffic.
+Prefix checkpoints cover that: L1 = an engine state saved inside the slot at a cut point of the prompt; L2 = a host-RAM pool of parked contexts (KV prefix + checkpoints) so a second
+session sharing one slot does not evict the first (`--checkpoint-slots 4`, `--checkpoint-ram-mb 8192`, `--checkpoint-min-tokens 4096`).
+- **`--mtp` used to disable all of it** (the engine reported no checkpoint support with the drafter loaded): every agent turn at 60K-85K tokens re-prefilled the whole prompt (60 s). The checkpoint now
+  includes the drafter's local rings, recurrent feature and (L2) global context K/V.
+- **`--checkpoint-align N`** (default: the prefill chunk, 2048): checkpoints are cut on a multiple of N and every prompt chunk boundary follows that grid. Batched-prefill numerics depend on the chunk
+  boundaries, so only a grid-aligned checkpoint continues exactly like an uncached prefill (`benchmarks/longctx_replay.py verify`: cached == uncached replies, greedy, with and without `--mtp`).
+  Cost: up to one grid step of the tail is prefilled again per turn (+0.5 s median at 40K-60K). `--checkpoint-align 0` = cut at N-16 (faster, not bit-identical to an uncached run).
+- With `--mtp` the engine holds one sequence, so `--parallel 2` shares it; two interleaved sessions swap through the L2 pool (park ~1.0-1.7 s for ~1.1 GB at 60K, restore ~0.2 s). Without `--mtp`,
+  `--parallel 2` keeps one sequence per slot (ctx/2 each) and needs no swap.
+- Replay tool: `benchmarks/longctx_replay.py` (modes replay / sweep / verify), `benchmarks/longctx_server_replay.sh`; numbers in docs/PERFORMANCE.md "Long context (p30)".
+
 ## Tokenizer and chat template fidelity
 
 * `qv_tok` (CLI): `qv_tok tokenizer.json encode|decode|chat` reads JSON lines on stdin.

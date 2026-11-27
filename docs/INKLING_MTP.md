@@ -173,3 +173,36 @@ Open optimisation targets: expert-weight traffic in the row path, adaptive depth
 | prose | 32768 | 7 | 3/3 | 99.7 | 55.0 | 0.55x | 2.18 | yes |
 
 Server end to end (qv_server, depth 3, temperature 0, 2 chat requests of 160 tokens, reasoning-style prose): text identical to plain; 119.0/109.8 tok/s with MTP against 118.8/119.6 plain. Engine stats: 58 cycles / 90 accepted and 123 cycles / 176 accepted, i.e. 1.4-1.55 accepted per cycle (about 2.5 tokens per cycle), so on this text the cycle cost (about 19 ms at depth 3) roughly cancels the yield. The speculative path is active (`QV_MTP_DEBUG=1` prints use_chunk and the stats); the lack of speedup is low acceptance on chat prose, not a disabled path. Chunks of 32 tokens are used so that cycles are not cut by plain tails.
+
+## 11. Lossless speculative sampling at T > 0 (p29/spec-speed, 2026-11-27)
+
+Before this step the Inkling CUDA engine had no `decode_speculative`: `qv_server --mtp` at the default sampling (T = 1.0, top_k 40 / top_p 0.95 / min_p 0.05) logged `spec_ok=0 use_chunk=0`
+(dev e0c600b: `mtp stats: cycles=0`) and decoded one token per step through the host sampler (200K-vocab logits copied and filtered on the host for every token). The MTP numbers of sections 8-10
+are greedy only.
+
+* **Drafter proposal.** The DSpark drafter is a deterministic greedy chain, so its proposal distribution is a point mass q = delta(d). Speculative sampling is lossless for any q: draft d is accepted
+  with probability min(1, p(d) / q(d)) = p(d); on rejection the token is drawn from the residual max(0, p - q) / norm, which for a point mass is p with d removed; if all drafts are accepted a bonus
+  token is drawn from the last row. `qv::spec_round_point` (include/qv/spec_sampling.h) is that round; the engine and the CPU test run the same function. The expected accepted tokens per draft is
+  p(d) instead of the greedy 0/1 match, which is why acceptance at T = 1 is lower than the greedy numbers.
+* **Cycle.** Graph A = draft block (R-1 Markov steps) + R-row verify + GPU candidate extraction (`extract_top_candidates_batch`, tokens within `spec_candidate_margin` of the row max, up to 4096, plus
+  max and sum-exp; the first 256 candidates of each row are copied to pinned memory inside the graph, a tail copy only when a row has more) -> one host sync -> host builds the filtered distribution of
+  each needed row (`build_dist_from_candidates`, dense fallback) and runs the round -> graph B = commit of the n + 1 accepted rows (conv states, local-ring K/V, drafter context ingest, position advance)
+  -> graph A of the next cycle is queued before the host waits again. One sync per cycle; verify width follows the tokens left (R in {2,3,4,8}), a last single token is one host-sampled plain step.
+  The host RNG seeds a per-cycle seed that is written to the device state for the sampled-draft kernel.
+* **Optional sampled drafts** (`QV_SPEC_DRAFT=sample`, default `point`): the drafts are drawn from the drafter distribution (softcapped base + Markov bias, same filter chain and T as the request,
+  up to 256 candidates kept) and the round uses q = that distribution (`spec_round_q`). Lossless as well; measured acceptance at T = 1 was the same as point-mass drafts (see below), so it is off.
+* **Exactness gates.** (1) `tests/test_ink_spec.cpp`: T = 0 `decode_speculative` equals plain greedy (ids and next-step logits) and, at T = 1 with the server defaults, the engine state after
+  speculative sampling of 40 tokens equals plain stepping over the same tokens (next-step logits bit-identical; 3-6 seeds, 12-28 accepted drafts per 40 tokens, i.e. many different accept patterns) on the four
+  golden prompts including the 4K one, in both draft modes. (2) `tests/test_spec_point.cpp` (CPU, no model): synthetic order-1 LM sampled through the real filter chain (`build_dist_dense`),
+  plain vs speculative, 400k draws, two-sample chi-square on the first token and on stream positions 0-7 over 100k streams: all p > 0.05 in both modes; replacing the residual by a fresh draw from p
+  (a deliberate bug) fails with chi2 ~ 27000. An engine-level chi-square was not run: every draw needs a reset + prefill (1.6 s), 20k draws x 2 arms is ~18 h; the state-replay test covers the engine
+  glue and the CPU test covers the algebra.
+* **Adaptive width and plain steps.** A speculative cycle at R = 2 can never beat a sampled plain step, and R = 4 needs about 2.6 tokens per cycle to break even, so `mtp_decode_spec` keeps a per-width EMA of
+  accepted drafts and picks the width (or a plain step, R = 0, which uses the same GPU candidate extraction plus host sampling) with a simple cost model (plain 7.7 ms; draft 2.2 + 0.17 (R-1) ms;
+  verify {2: 12.6, 3: 14.5, 4: 17.1, 8: 26.7} ms; +0.35 ms host). `QV_SPEC_ADAPT=0` restores the fixed `--mtp-depth` width. Both are lossless (state-replay and T = 0 gates pass in both settings).
+  Effect: prose goes from 104 (fixed depth 3) to 130 tok/s, equal to a plain step with GPU extraction; code keeps the speculative gain.
+* **Constrained MTP.** With `--mtp-grammar` the engine exposes `has_constrained_mtp()`; `decode_speculative_constrained` / `decode_greedy_constrained` run the cycle with a `TokenConstraint`
+  (rows are masked by `try_accept` sequentially, an end-of-generation or dead constraint stops the round). Test: even-token-id constraint, ids and next-step logits identical to a host-masked plain run.
+  Tool-call requests no longer fall back to the plain host sampler after the lazy-grammar trigger (see PERFORMANCE.md for tok/s).
+* **Why 200 tok/s at T = 1 is not reached.** Verify at R = 4 is bandwidth-bound on the union of about 28-32 distinct experts (w13_u about 0.87 TB/s, about 4.4 MB per expert and application), so the MoE
+  alone is about 8.7 ms and a cycle is about 17 ms; at 2.4-2.6 accepted tokens per cycle that is 140-150 tok/s at best, below the 200 target. The plain sampled step is about 7.7 ms (130 tok/s).

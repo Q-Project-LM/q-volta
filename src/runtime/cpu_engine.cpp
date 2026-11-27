@@ -219,8 +219,129 @@ class CpuEngine final : public Engine {
         logits_all_.clear();
         mtp_ready_ = -1;
     }
+    bool has_state_save() const override { return true; }
     void state_save() override { conv_save_ = conv_state_; gdn_save_ = gdn_state_; }
     void state_restore() override { conv_state_ = conv_save_; gdn_state_ = gdn_save_; mtp_ready_ = -1; }
+    bool has_checkpoint() const override { return true; }
+    bool save_checkpoint(std::vector<uint8_t>& out) override {
+        struct CpuCkptHdr {
+            uint32_t magic = 0x43504331u;
+            int32_t mtp_ready = -1;
+            uint64_t conv_b = 0, gdn_b = 0, logits_b = 0, hlast_b = 0;
+        } h;
+        h.mtp_ready = mtp_ready_;
+        h.conv_b = conv_state_.size() * sizeof(float);
+        h.gdn_b = gdn_state_.size() * sizeof(float);
+        h.logits_b = logits_.size() * sizeof(float);
+        h.hlast_b = mtp_hid_last_.size() * sizeof(float);
+        out.resize(sizeof(CpuCkptHdr) + h.conv_b + h.gdn_b + h.logits_b + h.hlast_b);
+        uint8_t* p = out.data();
+        std::memcpy(p, &h, sizeof(h));
+        p += sizeof(h);
+        auto put = [&](const void* src, size_t b) {
+            if (b > 0) std::memcpy(p, src, b);
+            p += b;
+        };
+        put(conv_state_.data(), h.conv_b);
+        put(gdn_state_.data(), h.gdn_b);
+        put(logits_.data(), h.logits_b);
+        put(mtp_hid_last_.data(), h.hlast_b);
+        return true;
+    }
+    bool restore_checkpoint(const std::vector<uint8_t>& in) override {
+        struct CpuCkptHdr {
+            uint32_t magic = 0x43504331u;
+            int32_t mtp_ready = -1;
+            uint64_t conv_b = 0, gdn_b = 0, logits_b = 0, hlast_b = 0;
+        };
+        if (in.size() < sizeof(CpuCkptHdr)) return false;
+        CpuCkptHdr h;
+        std::memcpy(&h, in.data(), sizeof(h));
+        if (h.magic != 0x43504331u) return false;
+        const size_t conv_b = conv_state_.size() * sizeof(float);
+        const size_t gdn_b = gdn_state_.size() * sizeof(float);
+        const size_t logits_b = logits_.size() * sizeof(float);
+        const size_t hlast_b = mtp_hid_last_.size() * sizeof(float);
+        if (h.conv_b != conv_b || h.gdn_b != gdn_b || h.logits_b != logits_b || h.hlast_b != hlast_b) return false;
+        if (in.size() != sizeof(CpuCkptHdr) + conv_b + gdn_b + logits_b + hlast_b) return false;
+        const uint8_t* p = in.data() + sizeof(CpuCkptHdr);
+        auto get = [&](void* dst, size_t b) {
+            if (b > 0) std::memcpy(dst, p, b);
+            p += b;
+        };
+        get(conv_state_.data(), conv_b);
+        get(gdn_state_.data(), gdn_b);
+        get(logits_.data(), logits_b);
+        get(mtp_hid_last_.data(), hlast_b);
+        mtp_ready_ = h.mtp_ready;
+        return true;
+    }
+    struct CpuKvHdr {
+        uint32_t magic = 0x43504B31u;  // "CPK1"
+        int32_t n_kv_layers = 0, n_kv_heads = 0, head_dim = 0, n_tokens = 0;
+        uint64_t payload_bytes = 0;
+    };
+    size_t checkpoint_bytes() const override {
+        return 40 + (conv_state_.size() + gdn_state_.size() + logits_.size() + mtp_hid_last_.size()) * sizeof(float);  // sizeof(CpuCkptHdr) == 40
+    }
+    bool has_kv_checkpoint() const override { return true; }
+    size_t kv_checkpoint_bytes(int n_tokens) const override {
+        if (n_tokens < 0 || n_tokens > opt_.max_ctx) return 0;
+        const size_t rows = (size_t)(n_attn_ + (opt_.mtp ? 1 : 0)) * (size_t)cfg_.n_kv_heads;
+        return sizeof(CpuKvHdr) + 2 * rows * (size_t)n_tokens * (size_t)cfg_.head_dim * sizeof(float);
+    }
+    bool save_kv_prefix(std::vector<uint8_t>& out, int n_tokens) override {
+        if (n_tokens < 0 || n_tokens > opt_.max_ctx) return false;
+        const int n_kv_layers = n_attn_ + (opt_.mtp ? 1 : 0);
+        const size_t rows = (size_t)n_kv_layers * (size_t)cfg_.n_kv_heads;
+        const size_t row_w = (size_t)n_tokens * (size_t)cfg_.head_dim * sizeof(float);
+        const size_t spitch = (size_t)opt_.max_ctx * (size_t)cfg_.head_dim * sizeof(float);
+        CpuKvHdr h;
+        h.n_kv_layers = n_kv_layers;
+        h.n_kv_heads = cfg_.n_kv_heads;
+        h.head_dim = cfg_.head_dim;
+        h.n_tokens = n_tokens;
+        h.payload_bytes = 2 * rows * row_w;
+        out.resize(sizeof(CpuKvHdr) + h.payload_bytes);
+        std::memcpy(out.data(), &h, sizeof(h));
+        uint8_t* p = out.data() + sizeof(h);
+        if (row_w > 0 && rows > 0) {
+            const uint8_t* ks = reinterpret_cast<const uint8_t*>(k_cache_);
+            const uint8_t* vs = reinterpret_cast<const uint8_t*>(v_cache_);
+            uint8_t* kp = p;
+            uint8_t* vp = p + rows * row_w;
+            for (size_t r = 0; r < rows; ++r) {
+                std::memcpy(kp + r * row_w, ks + r * spitch, row_w);
+                std::memcpy(vp + r * row_w, vs + r * spitch, row_w);
+            }
+        }
+        return true;
+    }
+    bool restore_kv_prefix(const std::vector<uint8_t>& in) override {
+        if (in.size() < sizeof(CpuKvHdr)) return false;
+        CpuKvHdr h;
+        std::memcpy(&h, in.data(), sizeof(h));
+        if (h.magic != 0x43504B31u) return false;
+        const int n_kv_layers = n_attn_ + (opt_.mtp ? 1 : 0);
+        if (h.n_kv_layers != n_kv_layers || h.n_kv_heads != cfg_.n_kv_heads || h.head_dim != cfg_.head_dim ||
+            h.n_tokens < 0 || h.n_tokens > opt_.max_ctx) return false;
+        const size_t rows = (size_t)n_kv_layers * (size_t)cfg_.n_kv_heads;
+        const size_t row_w = (size_t)h.n_tokens * (size_t)cfg_.head_dim * sizeof(float);
+        const size_t expected_payload = 2 * rows * row_w;
+        if (h.payload_bytes != expected_payload || in.size() != sizeof(CpuKvHdr) + expected_payload) return false;
+        if (row_w > 0 && rows > 0) {
+            const size_t dpitch = (size_t)opt_.max_ctx * (size_t)cfg_.head_dim * sizeof(float);
+            const uint8_t* kp = in.data() + sizeof(CpuKvHdr);
+            const uint8_t* vp = kp + rows * row_w;
+            uint8_t* kd = reinterpret_cast<uint8_t*>(k_cache_);
+            uint8_t* vd = reinterpret_cast<uint8_t*>(v_cache_);
+            for (size_t r = 0; r < rows; ++r) {
+                std::memcpy(kd + r * dpitch, kp + r * row_w, row_w);
+                std::memcpy(vd + r * dpitch, vp + r * row_w, row_w);
+            }
+        }
+        return true;
+    }
     void set_sparse(const std::string& v) override {
         sp_ = SparseCfg();
         if (v == "off" || v.empty()) return;

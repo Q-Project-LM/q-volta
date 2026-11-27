@@ -1,0 +1,12 @@
+chunk 2048 pf1=1
+{"run": 0, "mode": "plain", "prompt_tokens": 32768, "decode_pos": 32792, "prefill_ms": 18109.6, "decode_tokens": 16, "decode_ms": 138.96, "decode_tok_s": 115.14, "ids_fnv": "e8c14a021d1f8c80", "first_ids": [978, 68078, 196973, 149888, 15, 8, 13, 1205]}
+chunk 2048 pf1=0
+{"run": 0, "mode": "plain", "prompt_tokens": 32768, "decode_pos": 32792, "prefill_ms": 17813.6, "decode_tokens": 16, "decode_ms": 138.65, "decode_tok_s": 115.40, "ids_fnv": "e8c14a021d1f8c80", "first_ids": [978, 68078, 196973, 149888, 15, 8, 13, 1205]}
+chunk 4096 pf1=1
+{"run": 0, "mode": "plain", "prompt_tokens": 32768, "decode_pos": 32792, "prefill_ms": 15069.1, "decode_tokens": 16, "decode_ms": 138.78, "decode_tok_s": 115.29, "ids_fnv": "e8c14a021d1f8c80", "first_ids": [978, 68078, 196973, 149888, 15, 8, 13, 1205]}
+chunk 4096 pf1=0
+{"run": 0, "mode": "plain", "prompt_tokens": 32768, "decode_pos": 32792, "prefill_ms": 14058.7, "decode_tokens": 16, "decode_ms": 138.87, "decode_tok_s": 115.22, "ids_fnv": "e8c14a021d1f8c80", "first_ids": [978, 68078, 196973, 149888, 15, 8, 13, 1205]}
+chunk 8192 pf1=1
+{"run": 0, "mode": "plain", "prompt_tokens": 32768, "decode_pos": 32792, "prefill_ms": 12931.2, "decode_tokens": 16, "decode_ms": 139.12, "decode_tok_s": 115.01, "ids_fnv": "e8c14a021d1f8c80", "first_ids": [978, 68078, 196973, 149888, 15, 8, 13, 1205]}
+chunk 8192 pf1=0
+{"run": 0, "mode": "plain", "prompt_tokens": 32768, "decode_pos": 32792, "prefill_ms": 11782.7, "decode_tokens": 16, "decode_ms": 138.97, "decode_tok_s": 115.13, "ids_fnv": "e8c14a021d1f8c80", "first_ids": [978, 68078, 196973, 149888, 15, 8, 13, 1205]}

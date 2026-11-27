@@ -1,0 +1,6 @@
+dev: ctx 85000 rows 1 nsplit 64: 394.2 us/call (x8 global layers = 3.15 ms/token), 248 GB/s on the int4 KV read, part hash 8ece943aa1754aab
+new: ctx 85000 rows 1 nsplit 64: 299.7 us/call (x8 global layers = 2.40 ms/token), 327 GB/s on the int4 KV read, part hash 8ece943aa1754aab
+dev: ctx 85000 rows 4 nsplit 64: 1150.8 us/call (x8 global layers = 9.21 ms/token), 85 GB/s on the int4 KV read, part hash 9cc89ff2ee4a1090
+new: ctx 85000 rows 4 nsplit 64: 918.9 us/call (x8 global layers = 7.35 ms/token), 107 GB/s on the int4 KV read, part hash 9cc89ff2ee4a1090
+dev: ctx 32768 rows 4 nsplit 64: 479.2 us/call (x8 global layers = 3.83 ms/token), 79 GB/s on the int4 KV read, part hash 7806d36de86565e1
+new: ctx 32768 rows 4 nsplit 64: 379.8 us/call (x8 global layers = 3.04 ms/token), 99 GB/s on the int4 KV read, part hash 7806d36de86565e1

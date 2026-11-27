@@ -1,6 +1,7 @@
 #include <mma.h>
 
 #include <cstdio>
+#include <cstdlib>
 
 #include "../kernels/q8.cuh"
 #include "ink_prefill.h"
@@ -191,7 +192,145 @@ __global__ void __launch_bounds__(128) k_attn_pf(PfAttnArgs a) {
         for (int d = hf * 64; d < hf * 64 + 64; ++d) o[d] = __float2half(Ow[r * OLD + d] * inv * (1.f / (1.f + __expf(-gt[d]))));
     }
 }
+// Variant with the 3 query heads of one kv head in one block (12 warps): the K / V tile is loaded and int4-dequantised once for the 3 heads
+// instead of three times. Every warp runs exactly the arithmetic of k_attn_pf for its (head, 16 rows): bit-identical output.
+__global__ void __launch_bounds__(384, 1) k_attn_pf3(PfAttnArgs a) {
+    extern __shared__ __align__(16) unsigned char smraw[];
+    __half* Kt = reinterpret_cast<__half*>(smraw);
+    float* Sb = reinterpret_cast<float*>(smraw + 64 * KLD * 2);
+    __half* Pb = reinterpret_cast<__half*>(Sb + 12 * 16 * SLD);
+    const int g = blockIdx.y, t0 = blockIdx.x * 64, tid = threadIdx.x, wid = tid >> 5, lane = tid & 31;
+    const int h = g * 3 + (wid >> 2), warp = wid & 3;  // warp: query sub-tile of this head, same meaning as in k_attn_pf
+    const int wsm = wid;                               // shared-memory slot of this warp
+    float* Sw = Sb + wsm * 16 * SLD;
+    __half* Pw = Pb + wsm * 16 * PLD;
+    const int r = lane >> 1, hf = lane & 1;
+    const int tq = t0 + warp * 16 + r;  // chunk-relative query token of this lane's row
+    const bool rvalid = tq < a.T;
+    const int iabs = a.pos0 + tq;
+    wmma::fragment<wmma::matrix_a, 16, 16, 16, __half, wmma::row_major> qf[8];
+#pragma unroll
+    for (int kk = 0; kk < 8; ++kk) wmma::load_matrix_sync(qf[kk], a.qh + (long)(t0 + warp * 16) * 3072 + h * HD + kk * 16, 3072);
+    const int imin = a.pos0 + t0, imax = a.pos0 + min(a.T - 1, t0 + 63);
+    const int jlo = a.window > 0 ? max(0, imin - a.window + 1) : 0;
+    const int jb0 = jlo & ~63;
+    const __half* rlrow = a.rl + ((long)(rvalid ? tq : 0) * NH + h) * REXT;
+    const float sink = rvalid ? a.proj[(long)tq * PS + 8576 + h] : 0.f;
+    float m = sink;
+    auto load_tile = [&](const __half* base, int jb, bool isv) {
+        for (int i = tid; i < 64 * 16; i += 384) {
+            const int rr = i >> 4, cc = (i & 15) * 8;
+            const long j = jb + rr, row = j - a.kbase;
+            uint4 v = make_uint4(0, 0, 0, 0);
+            if (j >= 0 && j <= imax && row >= 0) {
+                if (a.kq) {
+                    const size_t r = (size_t)g * a.cap + row;
+                    const uint32_t w = *reinterpret_cast<const uint32_t*>((isv ? a.vq : a.kq) + r * 64 + (cc >> 1));
+                    const float2 sc = __half22float2((isv ? a.vs : a.ks)[r * 2 + (cc >> 6)]);
+                    __half2* o = reinterpret_cast<__half2*>(&v);
+#pragma unroll
+                    for (int e = 0; e < 4; ++e)
+                        o[e] = __floats2half2_rn(fmaf((float)((w >> (8 * e)) & 15u), sc.x, sc.y), fmaf((float)((w >> (8 * e + 4)) & 15u), sc.x, sc.y));
+                } else {
+                    v = *reinterpret_cast<const uint4*>(base + ((long)g * a.cap + row) * HD + cc);
+                }
+            }
+            *reinterpret_cast<uint4*>(Kt + rr * KLD + cc) = v;
+        }
+    };
+    auto qk = [&](int jb) {  // S tile of this warp into Sw
+#pragma unroll
+        for (int nt = 0; nt < 4; ++nt) {
+            wmma::fragment<wmma::accumulator, 16, 16, 16, float> acc;
+            wmma::fill_fragment(acc, 0.f);
+#pragma unroll
+            for (int kk = 0; kk < 8; ++kk) {
+                wmma::fragment<wmma::matrix_b, 16, 16, 16, __half, wmma::col_major> kf;
+                wmma::load_matrix_sync(kf, Kt + nt * 16 * KLD + kk * 16, KLD);
+                wmma::mma_sync(acc, qf[kk], kf, acc);
+            }
+            wmma::store_matrix_sync(Sw + nt * 16, acc, SLD, wmma::mem_row_major);
+        }
+        __syncwarp();
+    };
+    auto score = [&](int jb, int col) -> float {
+        const int j = jb + col;
+        const int d = iabs - j;
+        const bool ok = rvalid && d >= 0 && (a.window == 0 || d < a.window);
+        if (!ok) return -INFINITY;
+        return Sw[r * SLD + col] + (d < REXT ? __half2float(rlrow[d]) : 0.f);
+    };
+    // pass 1
+    for (int jb = jb0; jb <= imax; jb += 64) {
+        load_tile(a.kc, jb, false);
+        __syncthreads();
+        qk(jb);
+        for (int c = 0; c < 32; ++c) m = fmaxf(m, score(jb, hf * 32 + c));
+        __syncwarp();
+        __syncthreads();
+    }
+    m = fmaxf(m, __shfl_xor_sync(0xffffffffu, m, 1));
+    // pass 2
+    wmma::fragment<wmma::accumulator, 16, 16, 16, float> of[8];
+#pragma unroll
+    for (int nt = 0; nt < 8; ++nt) wmma::fill_fragment(of[nt], 0.f);
+    float l = 0.f;
+    for (int jb = jb0; jb <= imax; jb += 64) {
+        load_tile(a.kc, jb, false);
+        __syncthreads();
+        qk(jb);
+        for (int c = 0; c < 32; ++c) {
+            const float s = score(jb, hf * 32 + c);
+            const float p = __expf(s - m);  // exp(-inf) = 0
+            l += p;
+            Pw[r * PLD + hf * 32 + c] = __float2half(p);
+        }
+        __syncwarp();
+        __syncthreads();
+        load_tile(a.vc, jb, true);
+        __syncthreads();
+#pragma unroll
+        for (int kk = 0; kk < 4; ++kk) {
+            wmma::fragment<wmma::matrix_a, 16, 16, 16, __half, wmma::row_major> pf;
+            wmma::load_matrix_sync(pf, Pw + kk * 16, PLD);
+#pragma unroll
+            for (int nt = 0; nt < 8; ++nt) {
+                wmma::fragment<wmma::matrix_b, 16, 16, 16, __half, wmma::row_major> vf;
+                wmma::load_matrix_sync(vf, Kt + kk * 16 * KLD + nt * 16, KLD);
+                wmma::mma_sync(of[nt], pf, vf, of[nt]);
+            }
+        }
+        __syncthreads();
+    }
+    l += __shfl_xor_sync(0xffffffffu, l, 1);
+    l += __expf(sink - m);
+    // epilogue in two halves (12 warps x 16 x 132 floats would not fit): lanes hf = 0 write dims 0..63 from the first half, hf = 1 dims 64..127 from the second
+    constexpr int OLD2 = 68;
+    float* Ow = reinterpret_cast<float*>(smraw) + wsm * 16 * OLD2;
+    const float* gt = a.proj + (long)tq * PS + 5120 + h * HD;
+    __half* o = a.out + (long)tq * 3072 + h * HD;
+    const float inv = 1.f / l;
+#pragma unroll
+    for (int half_ = 0; half_ < 2; ++half_) {
+        __syncthreads();  // everybody is done with the K/V tile region before it is reused
+#pragma unroll
+        for (int nt = 0; nt < 4; ++nt) wmma::store_matrix_sync(Ow + nt * 16, of[half_ * 4 + nt], OLD2, wmma::mem_row_major);
+        __syncwarp();
+        if (rvalid && hf == half_)
+            for (int d = 0; d < 64; ++d) o[half_ * 64 + d] = __float2half(Ow[r * OLD2 + d] * inv * (1.f / (1.f + __expf(-gt[half_ * 64 + d]))));
+        __syncwarp();
+    }
+}
+
 void attn_prefill(const PfAttnArgs& a, cudaStream_t s) {
+    static const bool v3 = std::getenv("QV_PF1") == nullptr;  // QV_PF1=1: one head per block (reference kernel, same output bits)
+    if (v3) {
+        const size_t smem3 = 64 * KLD * 2 + 12 * 16 * SLD * 4 + 12 * 16 * PLD * 2;
+        static bool init = (cudaFuncSetAttribute(k_attn_pf3, cudaFuncAttributeMaxDynamicSharedMemorySize, (int)smem3), true);
+        (void)init;
+        k_attn_pf3<<<dim3((a.T + 63) / 64, NKV), 384, smem3, s>>>(a);
+        return;
+    }
     const size_t smem = 64 * KLD * 2 + 4 * 16 * SLD * 4 + 4 * 16 * PLD * 2;
     k_attn_pf<<<dim3((a.T + 63) / 64, NH), 128, smem, s>>>(a);
 }

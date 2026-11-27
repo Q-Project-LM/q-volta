@@ -26,6 +26,7 @@ struct Options {
     int kv_mode = 0, kv4_kmode = 0;
     bool mtp = false;
     int mtp_depth = 1;
+    bool mtp_grammar = false;          // preset/CLI: allow MTP decode under active GBNF grammar (tool_calls, json_schema)
     // ---- vision (Inkling image input; docs/INKLING_VISION.md)
     std::string vision_file;           // sidecar .qv; "" = auto (<model stem>-vision.qv, then <dir>/<family>-vision.qv), "none" = off, "mock" = test encoder
     bool allow_remote_images = false;  // http(s) image_url fetching (SSRF-guarded); data: URLs and files below --image-root always work
@@ -52,6 +53,10 @@ struct Options {
     // ---- server behaviour
     int n_parallel = -1;               // -1 = auto -> 4 slots (llama default with unified KV)
     bool cache_prompt = true;
+    int checkpoint_slots = 4;          // --checkpoint-slots N: L2 host-RAM parked context slots (0 disables L2 pool)
+    int checkpoint_ram_mb = 8192;      // --checkpoint-ram-mb MB: max total RAM for L2 checkpoint pool (0 disables L2 pool)
+    int checkpoint_align = -1;         // --checkpoint-align N: prefix checkpoints are cut on multiples of N tokens and prompt chunks follow that grid (-1: the prefill chunk, 0: off)
+    int checkpoint_min_tokens = 4096;  // --checkpoint-min-tokens N: min context tokens to activate L1/L2 checkpoints
     bool metrics = false, slots = true, props = false, embedding = false;
     std::string slot_save_path;
     std::string chat_template, chat_template_file, chat_template_kwargs;

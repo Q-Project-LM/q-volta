@@ -1,9 +1,11 @@
 // Adapters: GrammarState -> sampling hook, and vocabulary construction from qv::Tokenizer.
 #pragma once
+#include <algorithm>
 #include <memory>
 #include <vector>
 
 #include "grammar/grammar.h"
+#include "qv/spec_sampling.h"
 #include "sampling/sampler.h"
 #include "tokenizer/tokenizer.h"
 
@@ -18,6 +20,42 @@ class GrammarLogitMask final : public LogitMask {
 
    private:
     GrammarState st_;
+};
+
+class GrammarTokenConstraint final : public qv::TokenConstraint {
+   public:
+    GrammarTokenConstraint(GrammarState st, const std::vector<int>& stop_ids)
+        : st_(std::move(st)), stops_(stop_ids) {}
+    bool awaiting() const override { return st_.awaiting_trigger(); }
+    bool is_dead() const override { return st_.is_dead(); }
+    bool is_eog(int tok) const override {
+        return std::find(stops_.begin(), stops_.end(), tok) != stops_.end();
+    }
+    bool probe_allowed(int tok) const override {
+        if (st_.awaiting_trigger()) return true;
+        if (st_.is_dead() || tok < 0) return false;
+        if (!cached_mask_) cached_mask_ = st_.allowed();
+        return cached_mask_->allowed((size_t)tok);
+    }
+    bool try_accept(int tok) override {
+        if (st_.awaiting_trigger()) {
+            (void)st_.accept_token(tok);
+            cached_mask_.reset();
+            return true;
+        }
+        if (st_.is_dead()) return false;
+        GrammarState next = st_.fork();
+        if (!next.accept_token(tok)) return false;
+        st_ = std::move(next);
+        cached_mask_.reset();
+        return true;
+    }
+    void mask_logits(float* logits, size_t n) override { st_.mask_logits(logits, n); }
+
+   private:
+    mutable GrammarState st_;
+    std::vector<int> stops_;
+    mutable std::shared_ptr<const TokenMask> cached_mask_;
 };
 
 // Pieces are the raw token bytes (special tokens: literal text). `eog_ids` are end-of-generation tokens (eos, <|im_end|>, ...).

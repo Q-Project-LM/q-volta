@@ -1,0 +1,8 @@
+L1 restore: ids identical=1 logits identical=1 cycles 17/17 accepted 27/27 -> ok
+L2 restore after trash: ids identical=1 logits identical=1 cycles 17/17 accepted 27/27 -> ok
+info: whole-prompt prefill vs split-at-10593 prefill: ids identical=0 logits identical=0
+prompt 17656 split 10593 ckpt 172.4 MB kv-prefix 224.1 MB: PASS
+L1 restore: ids identical=1 logits identical=1 cycles 23/23 accepted 21/21 -> ok
+L2 restore after trash: ids identical=1 logits identical=1 cycles 23/23 accepted 21/21 -> ok
+info: whole-prompt prefill vs split-at-6532 prefill: ids identical=0 logits identical=0
+prompt 17656 split 6532 ckpt 172.4 MB kv-prefix 224.1 MB: PASS

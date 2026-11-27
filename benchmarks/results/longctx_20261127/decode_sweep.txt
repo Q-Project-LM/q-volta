@@ -1,0 +1,80 @@
+== lc-devbuild ctx 4096
+loaded in 4.8s: weights 9.89 GiB, state+scratch 0.20 GiB, device used 10.40 / 15.77 GiB
+{"run": 0, "mode": "plain", "prompt_tokens": 37, "decode_pos": 4120, "prefill_ms": 184.1, "decode_tokens": 64, "decode_ms": 506.29, "decode_tok_s": 126.41, "ids_fnv": "e1984df8acc8dbda", "first_ids": [148686, 220, 81573, 148686, 220, 81573,
+{"run": 1, "mode": "plain", "prompt_tokens": 37, "decode_pos": 4120, "prefill_ms": 183.5, "decode_tokens": 64, "decode_ms": 506.25, "decode_tok_s": 126.42, "ids_fnv": "af2d4aeb64b8c1cf", "first_ids": [148686, 220, 129830, 220, 81573, 148686
+{"run": 2, "mode": "plain", "prompt_tokens": 37, "decode_pos": 4120, "prefill_ms": 183.6, "decode_tokens": 64, "decode_ms": 506.48, "decode_tok_s": 126.36, "ids_fnv": "861386bf06ab2b83", "first_ids": [6652, 220, 6652, 220, 6652, 220, 6652, 
+== longctx-build ctx 4096
+loaded in 4.7s: weights 9.89 GiB, state+scratch 0.20 GiB, device used 10.40 / 15.77 GiB
+{"run": 0, "mode": "plain", "prompt_tokens": 37, "decode_pos": 4120, "prefill_ms": 186.3, "decode_tokens": 64, "decode_ms": 508.89, "decode_tok_s": 125.76, "ids_fnv": "e1984df8acc8dbda", "first_ids": [148686, 220, 81573, 148686, 220, 81573,
+{"run": 1, "mode": "plain", "prompt_tokens": 37, "decode_pos": 4120, "prefill_ms": 185.2, "decode_tokens": 64, "decode_ms": 509.11, "decode_tok_s": 125.71, "ids_fnv": "af2d4aeb64b8c1cf", "first_ids": [148686, 220, 129830, 220, 81573, 148686
+{"run": 2, "mode": "plain", "prompt_tokens": 37, "decode_pos": 4120, "prefill_ms": 184.7, "decode_tokens": 64, "decode_ms": 509.07, "decode_tok_s": 125.72, "ids_fnv": "861386bf06ab2b83", "first_ids": [6652, 220, 6652, 220, 6652, 220, 6652, 
+== lc-devbuild ctx 16384
+loaded in 4.8s: weights 9.89 GiB, state+scratch 0.31 GiB, device used 10.50 / 15.77 GiB
+{"run": 0, "mode": "plain", "prompt_tokens": 37, "decode_pos": 16408, "prefill_ms": 184.5, "decode_tokens": 64, "decode_ms": 536.48, "decode_tok_s": 119.30, "ids_fnv": "f0b2efc72953593d", "first_ids": [9959, 220, 68076, 9959, 220, 68076, 99
+{"run": 1, "mode": "plain", "prompt_tokens": 37, "decode_pos": 16408, "prefill_ms": 183.2, "decode_tokens": 64, "decode_ms": 536.67, "decode_tok_s": 119.25, "ids_fnv": "fb0bbff57005ea03", "first_ids": [220, 25208, 220, 122053, 220, 25208, 2
+{"run": 2, "mode": "plain", "prompt_tokens": 37, "decode_pos": 16408, "prefill_ms": 183.0, "decode_tokens": 64, "decode_ms": 536.73, "decode_tok_s": 119.24, "ids_fnv": "da8a6a6e8754f303", "first_ids": [9919, 220, 9919, 220, 9919, 220, 9919,
+== longctx-build ctx 16384
+loaded in 4.7s: weights 9.89 GiB, state+scratch 0.31 GiB, device used 10.50 / 15.77 GiB
+{"run": 0, "mode": "plain", "prompt_tokens": 37, "decode_pos": 16408, "prefill_ms": 185.5, "decode_tokens": 64, "decode_ms": 529.30, "decode_tok_s": 120.91, "ids_fnv": "f0b2efc72953593d", "first_ids": [9959, 220, 68076, 9959, 220, 68076, 99
+{"run": 1, "mode": "plain", "prompt_tokens": 37, "decode_pos": 16408, "prefill_ms": 184.9, "decode_tokens": 64, "decode_ms": 529.40, "decode_tok_s": 120.89, "ids_fnv": "fb0bbff57005ea03", "first_ids": [220, 25208, 220, 122053, 220, 25208, 2
+{"run": 2, "mode": "plain", "prompt_tokens": 37, "decode_pos": 16408, "prefill_ms": 185.2, "decode_tokens": 64, "decode_ms": 529.38, "decode_tok_s": 120.90, "ids_fnv": "da8a6a6e8754f303", "first_ids": [9919, 220, 9919, 220, 9919, 220, 9919,
+== lc-devbuild ctx 32768
+loaded in 4.7s: weights 9.89 GiB, state+scratch 0.45 GiB, device used 10.64 / 15.77 GiB
+{"run": 0, "mode": "plain", "prompt_tokens": 37, "decode_pos": 32792, "prefill_ms": 183.5, "decode_tokens": 64, "decode_ms": 574.29, "decode_tok_s": 111.44, "ids_fnv": "af2d4aeb64b8c1cf", "first_ids": [148686, 220, 129830, 220, 81573, 14868
+{"run": 1, "mode": "plain", "prompt_tokens": 37, "decode_pos": 32792, "prefill_ms": 182.6, "decode_tokens": 64, "decode_ms": 574.08, "decode_tok_s": 111.48, "ids_fnv": "d9783a169a08bd2c", "first_ids": [220, 10039, 220, 22274, 220, 10039, 22
+{"run": 2, "mode": "plain", "prompt_tokens": 37, "decode_pos": 32792, "prefill_ms": 182.7, "decode_tokens": 64, "decode_ms": 574.10, "decode_tok_s": 111.48, "ids_fnv": "cd3b110776bce85d", "first_ids": [17180, 24706, 220, 17180, 24706, 220, 
+== longctx-build ctx 32768
+loaded in 4.9s: weights 9.89 GiB, state+scratch 0.45 GiB, device used 10.64 / 15.77 GiB
+{"run": 0, "mode": "plain", "prompt_tokens": 37, "decode_pos": 32792, "prefill_ms": 187.0, "decode_tokens": 64, "decode_ms": 555.63, "decode_tok_s": 115.18, "ids_fnv": "af2d4aeb64b8c1cf", "first_ids": [148686, 220, 129830, 220, 81573, 14868
+{"run": 1, "mode": "plain", "prompt_tokens": 37, "decode_pos": 32792, "prefill_ms": 185.2, "decode_tokens": 64, "decode_ms": 555.47, "decode_tok_s": 115.22, "ids_fnv": "d9783a169a08bd2c", "first_ids": [220, 10039, 220, 22274, 220, 10039, 22
+{"run": 2, "mode": "plain", "prompt_tokens": 37, "decode_pos": 32792, "prefill_ms": 184.6, "decode_tokens": 64, "decode_ms": 555.84, "decode_tok_s": 115.14, "ids_fnv": "cd3b110776bce85d", "first_ids": [17180, 24706, 220, 17180, 24706, 220, 
+== lc-devbuild ctx 65536
+loaded in 4.8s: weights 9.89 GiB, state+scratch 0.73 GiB, device used 10.92 / 15.77 GiB
+{"run": 0, "mode": "plain", "prompt_tokens": 37, "decode_pos": 65560, "prefill_ms": 184.2, "decode_tokens": 64, "decode_ms": 649.67, "decode_tok_s": 98.51, "ids_fnv": "08bcdfb7d25ea303", "first_ids": [118995, 220, 118995, 220, 118995, 220, 
+{"run": 1, "mode": "plain", "prompt_tokens": 37, "decode_pos": 65560, "prefill_ms": 186.4, "decode_tokens": 64, "decode_ms": 649.99, "decode_tok_s": 98.46, "ids_fnv": "333b6492f0e00b24", "first_ids": [16, 13, 220, 16, 13, 220, 16, 13]}
+{"run": 2, "mode": "plain", "prompt_tokens": 37, "decode_pos": 65560, "prefill_ms": 183.2, "decode_tokens": 64, "decode_ms": 649.87, "decode_tok_s": 98.48, "ids_fnv": "dedab8bde8ba7583", "first_ids": [16, 220, 16, 220, 16, 220, 16, 220]}
+== longctx-build ctx 65536
+loaded in 4.9s: weights 9.89 GiB, state+scratch 0.73 GiB, device used 10.92 / 15.77 GiB
+{"run": 0, "mode": "plain", "prompt_tokens": 37, "decode_pos": 65560, "prefill_ms": 185.3, "decode_tokens": 64, "decode_ms": 613.60, "decode_tok_s": 104.30, "ids_fnv": "08bcdfb7d25ea303", "first_ids": [118995, 220, 118995, 220, 118995, 220,
+{"run": 1, "mode": "plain", "prompt_tokens": 37, "decode_pos": 65560, "prefill_ms": 184.5, "decode_tokens": 64, "decode_ms": 614.05, "decode_tok_s": 104.23, "ids_fnv": "333b6492f0e00b24", "first_ids": [16, 13, 220, 16, 13, 220, 16, 13]}
+{"run": 2, "mode": "plain", "prompt_tokens": 37, "decode_pos": 65560, "prefill_ms": 184.5, "decode_tokens": 64, "decode_ms": 614.03, "decode_tok_s": 104.23, "ids_fnv": "dedab8bde8ba7583", "first_ids": [16, 220, 16, 220, 16, 220, 16, 220]}
+== lc-devbuild ctx 85000
+loaded in 4.7s: weights 9.89 GiB, state+scratch 0.89 GiB, device used 11.09 / 15.77 GiB
+{"run": 0, "mode": "plain", "prompt_tokens": 37, "decode_pos": 85024, "prefill_ms": 185.6, "decode_tokens": 64, "decode_ms": 692.15, "decode_tok_s": 92.47, "ids_fnv": "afdf60ceeb4f0103", "first_ids": [16, 13, 16, 13, 16, 13, 16, 13]}
+{"run": 1, "mode": "plain", "prompt_tokens": 37, "decode_pos": 85024, "prefill_ms": 183.6, "decode_tokens": 64, "decode_ms": 692.27, "decode_tok_s": 92.45, "ids_fnv": "afdf60ceeb4f0103", "first_ids": [16, 13, 16, 13, 16, 13, 16, 13]}
+{"run": 2, "mode": "plain", "prompt_tokens": 37, "decode_pos": 85024, "prefill_ms": 183.5, "decode_tokens": 64, "decode_ms": 691.87, "decode_tok_s": 92.50, "ids_fnv": "81474086becec753", "first_ids": [68040, 198, 68079, 198, 68084, 198, 680
+== longctx-build ctx 85000
+loaded in 4.7s: weights 9.89 GiB, state+scratch 0.89 GiB, device used 11.09 / 15.77 GiB
+{"run": 0, "mode": "plain", "prompt_tokens": 37, "decode_pos": 85024, "prefill_ms": 185.7, "decode_tokens": 64, "decode_ms": 645.65, "decode_tok_s": 99.12, "ids_fnv": "afdf60ceeb4f0103", "first_ids": [16, 13, 16, 13, 16, 13, 16, 13]}
+{"run": 1, "mode": "plain", "prompt_tokens": 37, "decode_pos": 85024, "prefill_ms": 184.8, "decode_tokens": 64, "decode_ms": 646.15, "decode_tok_s": 99.05, "ids_fnv": "afdf60ceeb4f0103", "first_ids": [16, 13, 16, 13, 16, 13, 16, 13]}
+{"run": 2, "mode": "plain", "prompt_tokens": 37, "decode_pos": 85024, "prefill_ms": 185.2, "decode_tokens": 64, "decode_ms": 646.10, "decode_tok_s": 99.06, "ids_fnv": "81474086becec753", "first_ids": [68040, 198, 68079, 198, 68084, 198, 680
+== lc-devbuild ctx 131000
+loaded in 4.9s: weights 9.89 GiB, state+scratch 1.29 GiB, device used 11.49 / 15.77 GiB
+{"run": 0, "mode": "plain", "prompt_tokens": 37, "decode_pos": 131024, "prefill_ms": 183.9, "decode_tokens": 64, "decode_ms": 780.97, "decode_tok_s": 81.95, "ids_fnv": "ca96e2e1b67557b5", "first_ids": [5687, 116, 220, 5687, 116, 220, 5687, 
+{"run": 1, "mode": "plain", "prompt_tokens": 37, "decode_pos": 131024, "prefill_ms": 184.5, "decode_tokens": 64, "decode_ms": 781.00, "decode_tok_s": 81.95, "ids_fnv": "bbdfacdbbf790383", "first_ids": [17180, 220, 17180, 220, 17180, 220, 17
+{"run": 2, "mode": "plain", "prompt_tokens": 37, "decode_pos": 131024, "prefill_ms": 184.0, "decode_tokens": 64, "decode_ms": 781.47, "decode_tok_s": 81.90, "ids_fnv": "db4faf347499844c", "first_ids": [220, 15622, 13533, 220, 15622, 13533, 
+== longctx-build ctx 131000
+loaded in 4.8s: weights 9.89 GiB, state+scratch 1.29 GiB, device used 11.49 / 15.77 GiB
+{"run": 0, "mode": "plain", "prompt_tokens": 37, "decode_pos": 131024, "prefill_ms": 186.4, "decode_tokens": 64, "decode_ms": 713.09, "decode_tok_s": 89.75, "ids_fnv": "ca96e2e1b67557b5", "first_ids": [5687, 116, 220, 5687, 116, 220, 5687, 
+{"run": 1, "mode": "plain", "prompt_tokens": 37, "decode_pos": 131024, "prefill_ms": 185.6, "decode_tokens": 64, "decode_ms": 713.03, "decode_tok_s": 89.76, "ids_fnv": "bbdfacdbbf790383", "first_ids": [17180, 220, 17180, 220, 17180, 220, 17
+{"run": 2, "mode": "plain", "prompt_tokens": 37, "decode_pos": 131024, "prefill_ms": 185.9, "decode_tokens": 64, "decode_ms": 712.80, "decode_tok_s": 89.79, "ids_fnv": "db4faf347499844c", "first_ids": [220, 15622, 13533, 220, 15622, 13533, 
+== lc-devbuild ctx 200000
+loaded in 4.8s: weights 9.89 GiB, state+scratch 1.88 GiB, device used 12.08 / 15.77 GiB
+{"run": 0, "mode": "plain", "prompt_tokens": 37, "decode_pos": 200024, "prefill_ms": 184.6, "decode_tokens": 64, "decode_ms": 922.16, "decode_tok_s": 69.40, "ids_fnv": "8e03e5b556698403", "first_ids": [30239, 220, 30239, 220, 30239, 220, 30
+{"run": 1, "mode": "plain", "prompt_tokens": 37, "decode_pos": 200024, "prefill_ms": 183.8, "decode_tokens": 64, "decode_ms": 922.61, "decode_tok_s": 69.37, "ids_fnv": "db4faf347499844c", "first_ids": [220, 15622, 13533, 220, 15622, 13533, 
+{"run": 2, "mode": "plain", "prompt_tokens": 37, "decode_pos": 200024, "prefill_ms": 184.0, "decode_tokens": 64, "decode_ms": 922.17, "decode_tok_s": 69.40, "ids_fnv": "338855c54f91ec56", "first_ids": [1377, 1377, 1377, 1377, 1377, 1377, 13
+== longctx-build ctx 200000
+loaded in 4.9s: weights 9.89 GiB, state+scratch 1.88 GiB, device used 12.08 / 15.77 GiB
+{"run": 0, "mode": "plain", "prompt_tokens": 37, "decode_pos": 200024, "prefill_ms": 187.4, "decode_tokens": 64, "decode_ms": 836.46, "decode_tok_s": 76.51, "ids_fnv": "8e03e5b556698403", "first_ids": [30239, 220, 30239, 220, 30239, 220, 30
+{"run": 1, "mode": "plain", "prompt_tokens": 37, "decode_pos": 200024, "prefill_ms": 184.2, "decode_tokens": 64, "decode_ms": 836.76, "decode_tok_s": 76.49, "ids_fnv": "db4faf347499844c", "first_ids": [220, 15622, 13533, 220, 15622, 13533, 
+{"run": 2, "mode": "plain", "prompt_tokens": 37, "decode_pos": 200024, "prefill_ms": 184.6, "decode_tokens": 64, "decode_ms": 836.67, "decode_tok_s": 76.49, "ids_fnv": "338855c54f91ec56", "first_ids": [1377, 1377, 1377, 1377, 1377, 1377, 13
+== lc-devbuild ctx 262000
+loaded in 4.8s: weights 9.89 GiB, state+scratch 2.41 GiB, device used 12.61 / 15.77 GiB
+{"run": 0, "mode": "plain", "prompt_tokens": 37, "decode_pos": 262024, "prefill_ms": 184.6, "decode_tokens": 64, "decode_ms": 1059.89, "decode_tok_s": 60.38, "ids_fnv": "b686013f9637a526", "first_ids": [22038, 15163, 220, 22038, 15163, 220,
+{"run": 1, "mode": "plain", "prompt_tokens": 37, "decode_pos": 262024, "prefill_ms": 183.4, "decode_tokens": 64, "decode_ms": 1061.29, "decode_tok_s": 60.30, "ids_fnv": "3763eb3d01f78ec3", "first_ids": [22038, 15163, 23518, 22912, 25208, 14
+{"run": 2, "mode": "plain", "prompt_tokens": 37, "decode_pos": 262024, "prefill_ms": 184.3, "decode_tokens": 64, "decode_ms": 1060.22, "decode_tok_s": 60.36, "ids_fnv": "3ed6efc278e43e03", "first_ids": [13, 16, 13, 16, 13, 16, 13, 16]}
+== longctx-build ctx 262000
+loaded in 4.7s: weights 9.89 GiB, state+scratch 2.41 GiB, device used 12.61 / 15.77 GiB
+{"run": 0, "mode": "plain", "prompt_tokens": 37, "decode_pos": 262024, "prefill_ms": 185.3, "decode_tokens": 64, "decode_ms": 925.44, "decode_tok_s": 69.16, "ids_fnv": "b686013f9637a526", "first_ids": [22038, 15163, 220, 22038, 15163, 220, 
+{"run": 1, "mode": "plain", "prompt_tokens": 37, "decode_pos": 262024, "prefill_ms": 184.4, "decode_tokens": 64, "decode_ms": 925.87, "decode_tok_s": 69.12, "ids_fnv": "3763eb3d01f78ec3", "first_ids": [22038, 15163, 23518, 22912, 25208, 144
+{"run": 2, "mode": "plain", "prompt_tokens": 37, "decode_pos": 262024, "prefill_ms": 185.1, "decode_tokens": 64, "decode_ms": 925.96, "decode_tok_s": 69.12, "ids_fnv": "3ed6efc278e43e03", "first_ids": [13, 16, 13, 16, 13, 16, 13, 16]}
