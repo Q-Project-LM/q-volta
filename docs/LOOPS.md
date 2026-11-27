@@ -66,11 +66,11 @@ the rejected token). Tool-turn decode on the merged tree, 33K / 66K prompts (tok
 
 | config | 32K tools | 64K tools |
 |---|---:|---:|
-| `--mtp` T=0, before (QV_NO_DRAIN=1, fix a only) | 3.7 | 1.6 |
+| `--mtp` T=0, before (`QV_NO_DRAIN=1`: key order fixed, drain off) | 3.7 | 1.6 |
 | `--mtp` T=0, after | 241 | 224 |
 | `--mtp --mtp-grammar` T=0 | 206 | 254 |
 | `--mtp` T=1.0 | 100 | 94 |
 | `--mtp --mtp-grammar` T=1.0 | 242 | 254 |
 | no `--mtp` T=1.0 | 99 | 95 |
 
-(`QV_NO_DRAIN=1` isolates the drain; the key-order fix alone is what removes the rejection.) Prefill time (19-26 s at 33K-66K) is unchanged and is not part of this issue.
+(Both parts are needed: with drain off, a lazy trigger inside a lookahead always rolls back, even for a valid call; the key-order fix makes the model's own call grammar-valid so the drain applies. Pre-fix tree: 3.3 / 1.4 tok/s.) Prefill time (19-26 s at 33K-66K) is unchanged and is not part of this issue.
