@@ -908,6 +908,9 @@ void App::load_model(const Options& mo_in, const std::string& forced_id) {
         long long wbytes = backend == "mock" ? 0 : (long long)new_eng->device_bytes_weights();
         new_eng->sync();
 
+        // Inkling is sampled at temperature 1.0 (its recommended setting; colder sampling loops more, docs/LOOPS.md). This replaces the
+        // llama.cpp default of 0.8 unless --temp / a preset sets it or the model ships a generation_config temperature.
+        if (arch == "inkling2_loop" && !o.given.count("temp") && embedded_applied.find("temp=") == std::string::npos) o.temp = 1.0f;
         // ---- vision sidecar (Inkling image input)
         std::unique_ptr<vision::Encoder> new_venc;
         std::string vf = o.vision_file;
