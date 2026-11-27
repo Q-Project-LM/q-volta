@@ -26,6 +26,7 @@ struct Options {
     int kv_mode = 0, kv4_kmode = 0;
     bool mtp = false;
     int mtp_depth = 1;
+    int mtp_max_ctx = 65536;           // plain decode instead of MTP once the context exceeds this many tokens (0 = never switch); not applied under --mtp-grammar tool turns
     bool mtp_grammar = false;          // preset/CLI: allow MTP decode under active GBNF grammar (tool_calls, json_schema)
     // ---- vision (Inkling image input; docs/INKLING_VISION.md)
     std::string vision_file;           // sidecar .qv; "" = auto (<model stem>-vision.qv, then <dir>/<family>-vision.qv), "none" = off, "mock" = test encoder

@@ -896,7 +896,10 @@ GenResult App::generate(Task& t, const std::function<bool()>& alive, const std::
             size_t la_base_pos = 0;  // cached_.size() right before the current lookahead chunk (position of `first`)
             bool la_saved = false;   // whether eng->state_save() was taken at la_base_pos
             const bool want_probs = t.n_probs > 0;
-            bool use_chunk = o.mtp && (chunk_greedy_ok || spec_ok) && !want_probs && !t.reasoning_end;
+            // MTP stops paying off at very long context (verify reads the whole KV for every drafted row): switch to plain decode past
+            // --mtp-max-ctx tokens. Constrained (tool-call grammar) MTP stays on: it is still several times faster there.
+            const int mtp_cut = (o.mtp_max_ctx > 0 && !mtp_gram) ? o.mtp_max_ctx : 0;
+            bool use_chunk = o.mtp && (chunk_greedy_ok || spec_ok) && !want_probs && !t.reasoning_end && !(mtp_cut && (int)cached_.size() >= mtp_cut);
             std::vector<int> forced;
             bool drain_la = false;           // lazy grammar fired inside a greedy MTP lookahead whose remaining tokens the grammar accepts (see below)
             const bool spec_was_ok = spec_ok;
@@ -1092,7 +1095,8 @@ GenResult App::generate(Task& t, const std::function<bool()>& alive, const std::
                 // ---- next token
                 if (use_chunk) {
                     if (la < lookahead.size()) { tk = lookahead[la++]; continue; }
-                    if (drain_la) { drain_la = false; use_chunk = false; lookahead.clear(); la = 0; }  // lookahead consumed: tk is its last token, not yet fed
+                    if (mtp_cut && (int)cached_.size() >= mtp_cut) { use_chunk = false; lookahead.clear(); la = 0; }  // context passed --mtp-max-ctx: tk is the last lookahead token, not yet fed
+                    else if (drain_la) { drain_la = false; use_chunk = false; lookahead.clear(); la = 0; }  // lookahead consumed: tk is its last token, not yet fed
                 }
                 if (use_chunk) {
                     int room = std::min(mtp_chunk, n_ctx - (int)cached_.size());

@@ -41,7 +41,7 @@ void print_help() {
         "  --frequency-penalty, --mirostat, --xtc-*, --dry-*, --dynatemp-*, -s/--seed, --samplers, --ignore-eos, -l/--logit-bias,\n"
         "  --grammar, --json-schema, -to/--timeout, --cors-*, --api-prefix, --log-disable, -v\n\n"
         "Q-Volta flags:\n"
-        "  --backend cuda|cpu|auto|mock   --kv fp32|fp16|int4   --mtp / --mtp-depth N / --mtp-file PATH (Inkling)   --prefill-chunk N   --tokenizer PATH\n"
+        "  --backend cuda|cpu|auto|mock   --kv fp32|fp16|int4   --mtp / --mtp-depth N / --mtp-max-ctx N (plain decode past N tokens, default 65536, 0 = never) / --mtp-file PATH (Inkling)   --prefill-chunk N   --tokenizer PATH\n"
         "  --max-queue N (503 beyond N waiting requests; default unbounded like llama-server)\n"
         "  mock backend (tests): --mock-text TEXT --mock-loop --mock-delay-us N (env QV_MOCK_LOAD_MS delays loading)\n");
 }
