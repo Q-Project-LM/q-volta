@@ -241,3 +241,14 @@ TTFT of a short (~100-token) request that arrives 1 s into a 30K-token prompt of
 Memory per extra slot: 0.19 GiB fixed (local-attention rings 0.16 GiB + conv states, logits, token buffers) + 9216 B per context token (int4 KV): Inkling at 40960 tokens/slot = 0.19 + 0.35 = 0.54 GiB; the whole 4-slot server at 163840 total tokens used 13.16 GiB on the V100 (production single sequence at 131072: 13.41 GiB incl. vision).
 Exactness (tests/test_multiseq.cpp, ids + logits at EVERY step): 4 prompts (37 / 150 / 2600 / 64 tokens) decoded interleaved on one n_seq=4 engine with a late-joining sequence (round 10) and an aborted + re-used slot (step 15), greedy and fixed-seed sampling: every sequence is bit-identical to the same prompt run alone on a single-sequence engine. Inkling int4 KV (48 steps), Inkling fp16 KV (24 steps), Qwen3.8-27B e1 int4 KV (40 steps): all PASS. CPU engines (Inkling, Qwen): the multi-sequence code compiles and an 18-step interleaved test on Inkling CPU was bit-identical, but a 6-step variant showed one sequence differing from the alone run and was NOT resolved (cause not found: possibly leftover state of the alone-reference engine rather than the sequence switch; a fresh-engine reference run was aborted by the owner). CPU multi-sequence is therefore UNVERIFIED; CPU Qwen was not run at all.
 Not done (phase 2, true batched decode): one forward over B sequences needs per-row attention against each sequence's own KV (split-K with a sequence table), union-of-experts MoE GEMV with per-row routing, per-sequence loop/sconv state and graphs per B. Estimated upside is bounded by the MoE: at B=4 up to 32 experts per layer are read instead of 8, the dense part (attention projections, router, head) is shared; not measured, so no number is claimed. llama.cpp (continuous batching) reaches higher aggregate throughput by design; no llama.cpp comparison was measured here (no GGUF of this model, models deleted).
+
+## Inkling speculative sampling at T = 1.0 (p29/spec-speed, 2026-11-27)
+qv_server, defaults top_k 40 / top_p 0.95 / min_p 0.05, ctx 25, 256 tokens, 3 runs, decode tok/s, dev (e0c600b) vs p29 binary measured back to back (V100, int4 KV):
+
+| class | dev --mtp | p29 --mtp | dev no MTP | p29 no MTP |
+|---|---|---|---|---|
+| code | 104.5 | 130.3 | 106.4 | 107.0 |
+| prose | 104.0 | 130.6 | 104.7 | 105.2 |
+| tool (p29 with --mtp-grammar) | 108.9 | 171.0 (146-188) | 110.5 | 111.0 |
+
+Distance to 200: code 1.5x, prose 1.5x. A verify cycle is about 17 ms (MoE union floor about 8.7 ms) and yields 2.4-2.6 tokens; a sampled plain step is about 7.7 ms (130 tok/s).

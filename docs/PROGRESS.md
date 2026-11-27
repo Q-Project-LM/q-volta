@@ -119,3 +119,11 @@ Update: e1b1 (10.40 GiB) measured: ppl 8x512 9.112, KL to Q8_0 0.0750, top-1 89.
 - Finding: inter-kernel gaps in the graph are 0.47 us (3 %); the time is per-kernel dependent latency chains. Wins: load hoisting, finer GEMV decomposition, removing a hidden local copy of a kernel argument struct, shared barriers, rank-based top-8, finish folded into attn_res. Ticket-merged kernels, side-stream branches, L2 prefetch and forced occupancy were slower (docs/INKLING_ENGINE.md).
 - MTP: absolute speed +1.7 % (code) but the gain over plain shrank 1.14x -> 1.02x because the verify rows kernels were not restructured (open item).
 - New: tests/test_ink_exact.cpp (per-step logits hash regression).
+
+## p29/spec-speed (2026-11-27) - Inkling speculative sampling at T > 0
+- Finding: Inkling had no `decode_speculative`, so `qv_server --mtp` at the default T = 1.0 ran the plain host-sampled path (about 105 tok/s, host sampling about 2 ms/token). Implemented lossless
+  speculative sampling (point-mass drafter, `spec_round_point`), GPU candidate extraction, adaptive width / plain-step policy, constrained MTP (commits 6876acc, 34ddc51, 6da51d9).
+- Verify kernels: expert-grouped w2 (`k_w2_g`) and 6-shuffle `warp_reduce4` reductions, bit-identical, about 1.1 ms off the R = 4 verify (17.8 -> 16.7 ms). Verify is bandwidth-bound on the expert union
+  (about 28-32 experts, w13_u about 0.87 TB/s; MoE floor about 8.7 ms).
+- Result through qv_server, T = 1.0, ctx 25, decode tok/s: code 104 -> 130, prose 104 -> 131, tool (--mtp-grammar) 109 -> 171 (see PERFORMANCE.md). 200 is not reached for code or prose.
+- Gates: T = 0 spec == plain greedy, T = 1 state replay bit-identical, CPU chi-square of the algebra (tests/test_spec_point), test_ink_mtp depth 3/7, test_multiseq, test_ink_exact.

@@ -64,3 +64,8 @@ See PERFORMANCE.md. Quantised-reference goldens (`/tmp/ink/qg`, from the CPU Q3A
 
 ## Sequences (p24/multiseq)
 `EngineOptions::n_seq = N` allocates N copies of the per-sequence state: local-attention rings, global KV (fp16 or int4), conv states of k/v/attn/mlp, logits, token/position buffer, argmax history and the CUDA graphs (captured lazily per sequence, they bake in the sequence's pointers). Weights, scratch, prefill buffers and cuBLAS state are shared: every step / prefill chunk fully rewrites the scratch it reads, so a sequence switch (`select_seq`) is pointer bookkeeping only (no copy, no sync) and results are bit-identical to running alone (tests/test_multiseq.cpp). Per extra sequence: 0.19 GiB + 9216 B x max_ctx (int4 KV) (see docs/PERFORMANCE.md). MTP keeps single-sequence drafter state (n_seq > 1 with MTP throws).
+
+## Speculative verify (p29/spec-speed)
+- `decode_speculative` (T > 0, lossless) and `decode_speculative_constrained` are implemented in `cuda_inkling_mtp.inc`; see INKLING_MTP.md section 11.
+- Verify rows kernels: `k_w2_g` is expert-grouped over the union of routed experts (4 rows per warp, per-row arithmetic order unchanged), `k_w13_u` and `k_w2_g` use `warp_reduce4` (6 shuffles for 4 rows,
+  xor-tree order 16,8,4,2,1 kept). Bit-identical to the 1-row kernels. Verify R = 4 is bandwidth-bound on the union (about 28-32 experts, about 4.4 MB per expert per application), floor about 8.7 ms for MoE.
