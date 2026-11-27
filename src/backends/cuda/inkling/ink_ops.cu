@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include "../kernels/elementwise.h"
 #include "../kernels/q8.cuh"
 #include "ink_ops.h"
 
@@ -1175,8 +1176,8 @@ void conv_commit(const float* rows, long rs, int T, int D, float* st, cudaStream
 // MTP verify kernels: rows (<= 8) share each weight load; per row the arithmetic (and its order) equals the 1-token kernels above.
 // ======================================================================================================================
 
-template <int BITS, int R>
-__global__ void __launch_bounds__(MR_WPB * 32) k_mgemv_rows(GDs D, int nr) {
+template <int BITS, int R, int WPB>
+__global__ void __launch_bounds__(WPB * 32) k_mgemv_rows(GDs D, int nr) {
     int b = blockIdx.x, di = 0;
 #pragma unroll 1
     while (di < D.n - 1 && b >= D.d[di].nblk) {
@@ -1185,7 +1186,7 @@ __global__ void __launch_bounds__(MR_WPB * 32) k_mgemv_rows(GDs D, int nr) {
     }
     const GD& g = D.d[di];
     const int warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
-    const int row0 = (b * MR_WPB + warp) * R;
+    const int row0 = (b * WPB + warp) * R;
     if (row0 >= g.N) return;
     float acc[R][8];
 #pragma unroll
@@ -1264,20 +1265,30 @@ __global__ void __launch_bounds__(MR_WPB * 32) k_mgemv_rows(GDs D, int nr) {
                 if (lane == 0 && row0 + r < g.N) g.y[t * g.ystride + row0 + r] = v;
             }
 }
-void mgemv_rows(GDs& g, int bits, int nr, cudaStream_t s) {
-    constexpr int R = MR_R;
+template <int R, int WPB>
+static void mgemv_rows_t(GDs& g, int bits, int nr, cudaStream_t s) {
     int tot = 0;
     for (int i = 0; i < g.n; ++i) {
-        g.d[i].nblk = (g.d[i].N + MR_WPB * R - 1) / (MR_WPB * R);
+        g.d[i].nblk = (g.d[i].N + WPB * R - 1) / (WPB * R);
         tot += g.d[i].nblk;
     }
     switch (bits) {
-        case 3: k_mgemv_rows<3, R><<<tot, MR_WPB * 32, 0, s>>>(g, nr); break;
-        case 4: k_mgemv_rows<4, R><<<tot, MR_WPB * 32, 0, s>>>(g, nr); break;
-        case 5: k_mgemv_rows<5, R><<<tot, MR_WPB * 32, 0, s>>>(g, nr); break;
-        case 6: k_mgemv_rows<6, R><<<tot, MR_WPB * 32, 0, s>>>(g, nr); break;
-        case 8: k_mgemv_rows<8, R><<<tot, MR_WPB * 32, 0, s>>>(g, nr); break;
+        case 3: k_mgemv_rows<3, R, WPB><<<tot, WPB * 32, 0, s>>>(g, nr); break;
+        case 4: k_mgemv_rows<4, R, WPB><<<tot, WPB * 32, 0, s>>>(g, nr); break;
+        case 5: k_mgemv_rows<5, R, WPB><<<tot, WPB * 32, 0, s>>>(g, nr); break;
+        case 6: k_mgemv_rows<6, R, WPB><<<tot, WPB * 32, 0, s>>>(g, nr); break;
+        case 8: k_mgemv_rows<8, R, WPB><<<tot, WPB * 32, 0, s>>>(g, nr); break;
         default: std::fprintf(stderr, "mgemv_rows: unsupported bits %d\n", bits); std::abort();
+    }
+}
+void mgemv_rows(GDs& g, int bits, int nr, cudaStream_t s) {
+    static const int var = std::getenv("QV_MGR") ? std::atoi(std::getenv("QV_MGR")) : 0;
+    switch (var) {
+        case 1: mgemv_rows_t<1, 2>(g, bits, nr, s); break;
+        case 2: mgemv_rows_t<1, 4>(g, bits, nr, s); break;
+        case 3: mgemv_rows_t<2, 1>(g, bits, nr, s); break;
+        case 4: mgemv_rows_t<2, 2>(g, bits, nr, s); break;
+        default: mgemv_rows_t<MR_R, MR_WPB>(g, bits, nr, s); break;
     }
 }
 
@@ -1307,6 +1318,22 @@ void moe_union(const int* ids, int rows, int* uni_e, int* uni_cnt, int* uni_pair
     k_moe_union<<<1, NE, 0, s>>>(ids, rows, uni_e, uni_cnt, uni_pair, uni_n);
 }
 
+
+// Reduce 4 per-lane values over the warp: transposition for the first two xor stages (offsets 16, 8: 3 shuffles), plain xor stages for 4, 2, 1. Bit-identical to four
+// warp_sum calls (same xor tree, same operand pairs; float addition is commutative) with 6 shuffles instead of 20. Lane l returns the full sum of a[2 * bit4 + bit3].
+__device__ __forceinline__ float warp_reduce4(float a0, float a1, float a2, float a3) {
+    const int lane = threadIdx.x & 31;
+    const bool h4 = (lane & 16) != 0, h3 = (lane & 8) != 0;
+    float k0 = h4 ? a2 : a0, k1 = h4 ? a3 : a1;
+    const float s0 = h4 ? a0 : a2, s1 = h4 ? a1 : a3;
+    k0 += __shfl_xor_sync(0xffffffffu, s0, 16);
+    k1 += __shfl_xor_sync(0xffffffffu, s1, 16);
+    float v = (h3 ? k1 : k0) + __shfl_xor_sync(0xffffffffu, h3 ? k0 : k1, 8);
+    v += __shfl_xor_sync(0xffffffffu, v, 4);
+    v += __shfl_xor_sync(0xffffffffu, v, 2);
+    v += __shfl_xor_sync(0xffffffffu, v, 1);
+    return v;
+}
 template <int BITS>
 __device__ __forceinline__ float qchunk_wb(const uint32_t (&w)[BITS], const int (&xw)[8], float dx, float xs, int qs, float sc, float mn, float acc) {
     constexpr int ZP = 1 << (BITS - 1);
@@ -1366,19 +1393,14 @@ __global__ void __launch_bounds__(512) k_w13_u(ExpertW W, Q8Vec x, const int* un
         }
     }
 #pragma unroll
-    for (int t = 0; t < 8; ++t)
-#pragma unroll
-        for (int r = 0; r < 4; ++r) acc[r][t] = warp_sum(acc[r][t]);
-    if (lane == 0) {
-#pragma unroll
-        for (int t = 0; t < 8; ++t)
-            if (t < cnt)
-#pragma unroll
-                for (int p = 0; p < 2; ++p) {
-                    const float gv = acc[2 * p][t], uv = acc[2 * p + 1][t];
-                    const float gc = gcap * tanhf(gv / gcap), uc = ucap * tanhf(uv / ucap);
-                    actv[t][warp * 2 + p] = gc * (1.f / (1.f + __expf(-gv))) * uc;
-                }
+    for (int t = 0; t < 8; ++t) {
+        const float mine = warp_reduce4(acc[0][t], acc[1][t], acc[2][t], acc[3][t]);  // lane: row r = 2 * bit4 + bit3 (gate = even r, up = odd r)
+        const float other = __shfl_xor_sync(0xffffffffu, mine, 8);
+        if ((lane & 15) == 0 && t < cnt) {  // lanes 0 and 16: gate of pair p = lane >> 4
+            const float gv = mine, uv = other;
+            const float gc = gcap * tanhf(gv / gcap), uc = ucap * tanhf(uv / ucap);
+            actv[t][warp * 2 + (lane >> 4)] = gc * (1.f / (1.f + __expf(-gv))) * uc;
+        }
     }
     __syncthreads();
     if (warp < cnt) q8_store_chunk(actv[warp][lane], uni_pair[u * 8 + warp] * (W.N / 64) + rb, act);
@@ -1396,37 +1418,57 @@ void moe_w13_rows(const ExpertW& W, const Q8Vec& x, const int* uni_e, const int*
     std::abort();
 }
 
-// w2 over the union: block (4 output rows, expert u), warp = pair; writes ys[pair][N]
-template <int BITS, int R>
-__global__ void __launch_bounds__(256) k_w2_u(ExpertW W, Q8Vec act, const int* uni_e, const int* uni_cnt, const int* uni_pair, const int* uni_n, float* ys) {
+// w2 over the union, expert-grouped: block (W2G_WPB warps x 4 output rows, expert u); each warp loads its 4 weight rows once per chunk and applies them to every
+// pair (row, slot) that selected the expert; per-pair arithmetic is identical to the 1-row k_w2 (same chunk order, same fma chain). Writes ys[pair][N].
+constexpr int W2G_WPB = 8;
+template <int BITS>
+__global__ void __launch_bounds__(W2G_WPB * 32) k_w2_g(ExpertW W, Q8Vec act, const int* uni_e, const int* uni_cnt, const int* uni_pair, const int* uni_n, float* ys) {
     const int u = blockIdx.y;
     if (u >= *uni_n) return;
-    const int w = threadIdx.x >> 5, lane = threadIdx.x & 31, row0 = blockIdx.x * R, e = uni_e[u];
-    if (w >= uni_cnt[u]) return;
-    const int pair = uni_pair[u * 8 + w];
+    const int warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
+    const int row0 = (blockIdx.x * W2G_WPB + warp) * 4;
+    if (row0 >= W.N) return;
+    const int e = uni_e[u], cnt = uni_cnt[u];
     const size_t C = W.K >> 5, G = W.K >> W.gshift;
     const int GS = W.gshift - 5;
     const uint32_t* qb = W.q + (size_t)e * W.N * C * BITS;
     const uint16_t* smb = W.sm8 + (size_t)e * W.N * G;
     const __half* rsb = W.rs + (size_t)e * W.N;
-    float acc[R], rsc[R];
+    float acc[4][8], rsc[4];
 #pragma unroll
-    for (int r = 0; r < R; ++r) { acc[r] = 0.f; rsc[r] = __half2float(rsb[row0 + r]) / 255.0f; }
+    for (int r = 0; r < 4; ++r) {
+        rsc[r] = __half2float(rsb[row0 + r]) / 255.0f;
+#pragma unroll
+        for (int t = 0; t < 8; ++t) acc[r][t] = 0.f;
+    }
+    int pair[8];
+#pragma unroll
+    for (int t = 0; t < 8; ++t) pair[t] = t < cnt ? uni_pair[u * 8 + t] : 0;
     for (size_t c = lane; c < C; c += 32) {
-        int xw[8], qs;
-        float dx, xs;
-        load_x(act, (size_t)pair * C + c, xw, dx, xs, qs);
+        uint32_t w[4][BITS];
+        float sc[4], mn[4];
 #pragma unroll
-        for (int r = 0; r < R; ++r) {
-            float sc, mn;
-            sm8_decode(smb[(size_t)(row0 + r) * G + (c >> GS)], rsc[r], W.zlo, W.zstep, sc, mn);
-            acc[r] = qchunk<BITS>(qb + ((size_t)(row0 + r) * C + c) * BITS, xw, dx, xs, qs, sc, mn, acc[r]);
+        for (int r = 0; r < 4; ++r) {
+            const uint32_t* wp = qb + ((size_t)(row0 + r) * C + c) * BITS;
+#pragma unroll
+            for (int b = 0; b < BITS; ++b) w[r][b] = __ldg(wp + b);
+            sm8_decode(smb[(size_t)(row0 + r) * G + (c >> GS)], rsc[r], W.zlo, W.zstep, sc[r], mn[r]);
+        }
+#pragma unroll
+        for (int t = 0; t < 8; ++t) {
+            if (t < cnt) {
+                int xw[8], qs;
+                float dx, xs;
+                load_x(act, (size_t)pair[t] * C + c, xw, dx, xs, qs);
+#pragma unroll
+                for (int r = 0; r < 4; ++r) acc[r][t] = qchunk_wb<BITS>(w[r], xw, dx, xs, qs, sc[r], mn[r], acc[r][t]);
+            }
         }
     }
 #pragma unroll
-    for (int r = 0; r < R; ++r) {
-        const float v = warp_sum(acc[r]);
-        if (lane == 0) ys[(size_t)pair * W.N + row0 + r] = v;
+    for (int t = 0; t < 8; ++t) {
+        const float mine = warp_reduce4(acc[0][t], acc[1][t], acc[2][t], acc[3][t]);
+        if ((lane & 7) == 0 && t < cnt) ys[(size_t)pair[t] * W.N + row0 + (lane >> 3)] = mine;  // lane>>3 = 2 * bit4 + bit3
     }
 }
 __global__ void k_w2_combine(const float* ys, const float* wts, float* y, int N) {
@@ -1439,12 +1481,11 @@ __global__ void k_w2_combine(const float* ys, const float* wts, float* y, int N)
 }
 void moe_w2_rows(const ExpertW& W, const Q8Vec& act, const int* uni_e, const int* uni_cnt, const int* uni_pair, const int* uni_n, int max_u, float* ys,
                  const float* wts, float* y, int rows, cudaStream_t s) {
-    constexpr int R = 4;
-    const dim3 grid(W.N / R, max_u);
+    const dim3 grid((W.N / 4 + W2G_WPB - 1) / W2G_WPB, max_u);
     switch (W.bits) {
-        case 3: k_w2_u<3, R><<<grid, 256, 0, s>>>(W, act, uni_e, uni_cnt, uni_pair, uni_n, ys); break;
-        case 4: k_w2_u<4, R><<<grid, 256, 0, s>>>(W, act, uni_e, uni_cnt, uni_pair, uni_n, ys); break;
-        case 5: k_w2_u<5, R><<<grid, 256, 0, s>>>(W, act, uni_e, uni_cnt, uni_pair, uni_n, ys); break;
+        case 3: k_w2_g<3><<<grid, W2G_WPB * 32, 0, s>>>(W, act, uni_e, uni_cnt, uni_pair, uni_n, ys); break;
+        case 4: k_w2_g<4><<<grid, W2G_WPB * 32, 0, s>>>(W, act, uni_e, uni_cnt, uni_pair, uni_n, ys); break;
+        case 5: k_w2_g<5><<<grid, W2G_WPB * 32, 0, s>>>(W, act, uni_e, uni_cnt, uni_pair, uni_n, ys); break;
         default: std::fprintf(stderr, "moe_w2_rows: unsupported bits %d\n", W.bits); std::abort();
     }
     k_w2_combine<<<dim3((W.N + 255) / 256, rows), 256, 0, s>>>(ys, wts, y, W.N);
@@ -1747,6 +1788,114 @@ __global__ void k_advance(int* st) { st[1] += st[2]; }
 void advance_pos(int* st, cudaStream_t s) { k_advance<<<1, 1, 0, s>>>(st); }
 void accept_rows(const int* vtok, const int* vy, int R, int* st, int* gen, int* nacc_hist, cudaStream_t s) {
     k_accept<<<1, 1, 0, s>>>(vtok, vy, R, st, gen, nacc_hist);
+}
+
+
+// ---- sampled drafts (lossless speculative sampling at T > 0)
+__global__ void k_draft_logits(const float* base, const float* bias, const float* fb, int n, float cap, float* out) {
+    for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += gridDim.x * blockDim.x) out[i] = cap * tanhf((base[i] + bias[i] + fb[i]) / cap);
+}
+void draft_logits(const float* base, const float* bias, const float* fold_bias, int n, float cap, float* out, cudaStream_t s) {
+    k_draft_logits<<<(n + 255) / 256, 256, 0, s>>>(base, bias, fold_bias, n, cap, out);
+}
+// one block of 256 threads: sort the extracted candidates (bitonic, descending, ties by id), apply top_k / top_p / min_p / temperature exactly like
+// qv::spec_sampling (build_dist_from_candidates), inverse-CDF draw with a counter-based hash of (*seed_ptr, step).
+__global__ void __launch_bounds__(256) k_draft_sample(const int* cid, const float* cval, const CandMeta* meta, DraftSampleParams p, const unsigned long long* seed_ptr, int step,
+                                                       int* q_id, float* q_prob, int* q_cnt, int* tok) {
+    __shared__ int s_id[256];
+    __shared__ float s_val[256];
+    __shared__ float s_lo, s_hi;
+    __shared__ int s_bcnt, s_out;
+    const int tid = threadIdx.x;
+    const int raw = meta->count;
+    const int n_in = raw > 0 ? (raw < p.max_extract ? raw : p.max_extract) : 0;
+    int cnt = n_in;
+    if (n_in <= 256) {
+        s_id[tid] = tid < n_in ? cid[tid] : 0x7fffffff;
+        s_val[tid] = tid < n_in ? cval[tid] : -INFINITY;
+    } else {  // more than 256 candidates: keep (about) the 256 largest by bisecting a value threshold
+        if (tid == 0) { s_lo = meta->mx - p.margin; s_hi = meta->mx; s_out = 0; }
+        s_id[tid] = 0x7fffffff;
+        s_val[tid] = -INFINITY;
+        __syncthreads();
+        for (int it = 0; it < 10; ++it) {
+            if (tid == 0) s_bcnt = 0;
+            __syncthreads();
+            const float mid = 0.5f * (s_lo + s_hi);
+            int lc = 0;
+            for (int i = tid; i < n_in; i += 256) if (cval[i] >= mid) ++lc;
+            if (lc) atomicAdd(&s_bcnt, lc);
+            __syncthreads();
+            if (tid == 0) { if (s_bcnt > 256) s_lo = mid; else s_hi = mid; }
+            __syncthreads();
+        }
+        const float thr = s_hi;
+        for (int i = tid; i < n_in; i += 256) {
+            const float v = cval[i];
+            if (v >= thr) { const int pos = atomicAdd(&s_out, 1); if (pos < 256) { s_id[pos] = cid[i]; s_val[pos] = v; } }
+        }
+        __syncthreads();
+        cnt = s_out < 256 ? s_out : 256;
+    }
+    __syncthreads();
+    for (int k = 2; k <= 256; k <<= 1) {
+        for (int j = k >> 1; j > 0; j >>= 1) {
+            const int ixj = tid ^ j;
+            if (ixj > tid) {
+                const bool desc = ((tid & k) == 0);
+                const float va = s_val[tid], vb = s_val[ixj];
+                const int ia = s_id[tid], ib = s_id[ixj];
+                const bool a_gt_b = (va > vb) || (va == vb && ia < ib);
+                if (desc ? !a_gt_b : a_gt_b) { s_val[tid] = vb; s_val[ixj] = va; s_id[tid] = ib; s_id[ixj] = ia; }
+            }
+            __syncthreads();
+        }
+    }
+    if (tid != 0) return;
+    if (cnt == 0 || !isfinite(s_val[0])) { q_id[0] = 0; q_prob[0] = 1.0f; *q_cnt = 1; *tok = 0; return; }
+    int keep = cnt;
+    const int min_k = p.min_keep > 1 ? p.min_keep : 1;
+    if (p.top_k > 0) { const int k = p.top_k > min_k ? p.top_k : min_k; if (k < keep) keep = k; }
+    const double cmax = (double)s_val[0];
+    if (p.top_p < 1.0f && keep > min_k) {
+        double denom = 0.0;
+        for (int i = 0; i < keep; ++i) denom += exp((double)s_val[i] - cmax);
+        double cum = 0.0;
+        for (int i = 0; i < keep; ++i) {
+            cum += exp((double)s_val[i] - cmax) / denom;
+            if (cum >= (double)p.top_p && i + 1 >= min_k) { keep = i + 1; break; }
+        }
+    }
+    if (p.min_p > 0.0f) {
+        int kp = 0;
+        while (kp < keep && exp((double)s_val[kp] - cmax) >= (double)p.min_p) ++kp;
+        const int mk = keep < min_k ? keep : min_k;
+        keep = kp > mk ? kp : mk;
+    }
+    if (p.temperature <= 0.0f) { q_id[0] = s_id[0]; q_prob[0] = 1.0f; *q_cnt = 1; *tok = s_id[0]; return; }
+    double sum_w = 0.0;
+    const double inv_t = 1.0 / (double)p.temperature;
+    double w[256];
+    for (int i = 0; i < keep; ++i) { w[i] = exp(((double)s_val[i] - cmax) * inv_t); sum_w += w[i]; }
+    unsigned long long z = *seed_ptr + 0x9e3779b97f4a7c15ull * (unsigned long long)(step + 1);
+    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
+    z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
+    z = z ^ (z >> 31);
+    const double u = (double)(z >> 11) * (1.0 / 9007199254740992.0);
+    double total = 0.0;
+    for (int i = 0; i < keep; ++i) { const float pr = (float)(w[i] / sum_w); q_id[i] = s_id[i]; q_prob[i] = pr; total += (double)pr; }
+    const double target = u * total;
+    double cdf = 0.0;
+    int chosen = s_id[keep - 1];
+    for (int i = 0; i < keep; ++i) { cdf += (double)q_prob[i]; if (target < cdf) { chosen = s_id[i]; break; } }
+    *q_cnt = keep;
+    *tok = chosen;
+}
+void draft_sample(const float* logits, int n, const DraftSampleParams& p, const unsigned long long* seed_ptr, int step, int* cand_id, float* cand_val, void* cand_meta,
+                  int* q_id, float* q_prob, int* q_cnt, int* tok, cudaStream_t s) {
+    CandMeta* meta = (CandMeta*)cand_meta;
+    extract_top_candidates_batch(logits, n, 1, p.margin, p.max_extract, cand_id, cand_val, meta, s);
+    k_draft_sample<<<1, 256, 0, s>>>(cand_id, cand_val, meta, p, seed_ptr, step, q_id, q_prob, q_cnt, tok);
 }
 
 }  // namespace qv::cuda::ink

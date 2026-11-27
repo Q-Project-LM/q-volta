@@ -263,3 +263,13 @@ Rejected (exact but slower): q in shared memory, forced 4-5 blocks/SM, magic-num
 **Prefill chunk** (qv_ink, 32768 tokens): 2048 17.81 s, 4096 14.06 s (-21 %), 8192 11.78 s (-34 %) with the shared-tile kernel (1-head kernel: 18.11 / 15.07 / 12.93 s). Numerics differ between chunk sizes (not bit-identical to 2048); `--prefill-chunk 8192`
 ran out of memory in the server at `--mtp --ctx-size 131072`. Server replay with `--prefill-chunk 4096` (--mtp, 2 x 60K): cold prefill 31 s instead of 39 s (1.96-1.99K tok/s), but the grid-aligned checkpoint re-prefills up to 4096 tokens per turn, so the median turn is 5.1 s instead of 4.1 s: a bigger chunk helps cold prompts, not turn latency. Default left at 2048.
 **C4 (max usable context)**: engine decode at position 262,024 over synthetic KV fits (12.61 / 15.77 GiB, 69.1 tok/s); 131K 11.49 GiB. Real prompts were prefilled only up to 85K (prefill 60.7 s through the server); no NIAH/ppl at 128K-256K was run here, so no quality claim above 85K.
+## Inkling speculative sampling at T = 1.0 (p29/spec-speed, 2026-11-27)
+qv_server, defaults top_k 40 / top_p 0.95 / min_p 0.05, ctx 25, 256 tokens, 3 runs, decode tok/s, dev (e0c600b) vs p29 binary measured back to back (V100, int4 KV):
+
+| class | dev --mtp | p29 --mtp | dev no MTP | p29 no MTP |
+|---|---|---|---|---|
+| code | 104.5 | 130.3 | 106.4 | 107.0 |
+| prose | 104.0 | 130.6 | 104.7 | 105.2 |
+| tool (p29 with --mtp-grammar) | 108.9 | 171.0 (146-188) | 110.5 | 111.0 |
+
+Distance to 200: code 1.5x, prose 1.5x. A verify cycle is about 17 ms (MoE union floor about 8.7 ms) and yields 2.4-2.6 tokens; a sampled plain step is about 7.7 ms (130 tok/s).

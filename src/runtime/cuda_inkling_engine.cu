@@ -176,6 +176,27 @@ class InklingEngine final : public Engine {
         QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
     }
 
+    bool has_speculative_decode() const override { return mtp_ && opt_.mtp; }
+    void decode_speculative(int first, int start_pos, int n, const SpecSamplingParams& sp, std::vector<int>& out) override {
+        if (!(mtp_ && opt_.mtp)) throw std::runtime_error("this engine does not support speculative sampling");
+        QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
+        mtp_decode_spec(first, start_pos, n, sp, out);
+    }
+
+    bool has_constrained_mtp() const override { return mtp_ && opt_.mtp; }
+    void decode_speculative_constrained(int first, int start_pos, int n, const SpecSamplingParams& sp, std::vector<int>& out, TokenConstraint* tc) override {
+        if (!(mtp_ && opt_.mtp)) throw std::runtime_error("this engine does not support speculative sampling");
+        QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
+        mtp_decode_spec(first, start_pos, n, sp, out, tc);
+    }
+    void decode_greedy_constrained(int first, int start_pos, int n, std::vector<int>& out, TokenConstraint* tc) override {
+        if (!tc || !(mtp_ && opt_.mtp)) { decode_greedy(first, start_pos, n, out, false); return; }
+        SpecSamplingParams g;  // temperature 0: the constrained distribution is a point mass on the best allowed token
+        g.temperature = 0.0f;
+        QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
+        mtp_decode_spec(first, start_pos, n, g, out, tc);
+    }
+
     int argmax() override {
         argmax_advance(logits_, cfg_.ink.unpadded_vocab, d_arg_, nullptr, nullptr, stream_);
         int r;

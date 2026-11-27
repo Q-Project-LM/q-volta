@@ -883,7 +883,10 @@ GenResult App::generate(Task& t, const std::function<bool()>& alive, const std::
             const bool mtp_gram = o.mtp && o.mtp_grammar && gmask && eng->has_constrained_mtp();
             bool argmax_ok = t.sp.engine_argmax_ok() && !grammar_active_init;  // fetch()/finish() fast argmax (never bypasses active grammar)
             bool chunk_greedy_ok = t.sp.engine_argmax_ok() && (!grammar_active_init || mtp_gram);
-            bool spec_ok = !t.sp.engine_argmax_ok() && t.sp.speculative_ok() && eng->has_speculative_decode() && (!grammar_active_init || mtp_gram);
+            bool spec_ok = !t.sp.engine_argmax_ok() && t.sp.speculative_ok() && eng->has_speculative_decode() && (!grammar_active_init || mtp_gram)
+                           // A lazy grammar that fires inside a speculative round needs a rollback; without a fast state save that is a
+                           // full re-prefill (4 s at 8K context), so such requests stay on the plain path unless --mtp-grammar handles it.
+                           && (!gmask || mtp_gram || eng->has_state_save());
             sampler.want_post_ = t.post_probs && t.n_probs > 0;
             Tokenizer::Decoder dec(tok);
             std::string pending;      // decoded text not yet emitted (held back for stop-string / utf-8)
