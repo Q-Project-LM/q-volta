@@ -84,7 +84,6 @@ class InklingEngine final : public Engine {
         }
         g_fwd_ = g_dec_ = nullptr;
         if (h_tp_) cudaFreeHost(h_tp_);
-        if (h_stage_) cudaFreeHost(h_stage_);
         for (int i = 0; i < 9; ++i) if (g_mtp_[i]) cudaGraphExecDestroy(g_mtp_[i]);
         for (void* p : allocs_) cudaFree(p);
         cudaFree(weights_);
@@ -310,15 +309,7 @@ class InklingEngine final : public Engine {
         h.payload_bytes += mtp_gkv_bytes(n_tokens);  // drafter global-layer context K/V prefix after the main KV
         out.resize(sizeof(InkKvHdr) + h.payload_bytes);
         std::memcpy(out.data(), &h, sizeof(h));
-        // device -> pinned staging buffer (a copy straight into the pageable vector ran at ~1 GB/s: page faults + the driver's bounce buffer), then one memcpy
-        if (stage_bytes_ < h.payload_bytes) {
-            if (h_stage_) cudaFreeHost(h_stage_);
-            h_stage_ = nullptr;
-            QV_CUDA_CHECK(cudaMallocHost(&h_stage_, h.payload_bytes));
-            stage_bytes_ = h.payload_bytes;
-        }
-        uint8_t* const dst = out.data() + sizeof(h);
-        uint8_t* p = h_stage_;
+        uint8_t* p = out.data() + sizeof(h);
         if (n_tokens > 0 && rows > 0) {
             if (kv4_) {
                 const size_t q_w = (size_t)n_tokens * 64, q_sp = (size_t)opt_.max_ctx * 64, q_b = rows * q_w;
@@ -340,11 +331,8 @@ class InklingEngine final : public Engine {
             QV_CUDA_CHECK(cudaMemcpy2DAsync(p + main_b + (size_t)ik::NKV * w, w, dvc_[1], sp, w, ik::NKV, cudaMemcpyDeviceToHost, stream_));
         }
         QV_CUDA_CHECK(cudaStreamSynchronize(stream_));
-        if (h.payload_bytes) std::memcpy(dst, h_stage_, h.payload_bytes);
         return true;
     }
-    uint8_t* h_stage_ = nullptr;
-    size_t stage_bytes_ = 0;
     bool restore_kv_prefix(const std::vector<uint8_t>& in) override {
         if (in.size() < sizeof(InkKvHdr)) return false;
         InkKvHdr h;
