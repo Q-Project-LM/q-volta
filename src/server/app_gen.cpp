@@ -11,6 +11,33 @@
 namespace qv::server {
 
 namespace {
+// Literal special-token text inside message content (a doc that quotes "<|unused_200054|>", a pasted chat transcript, ...) must not become
+// a control token when the whole templated prompt is tokenized. Break the "<|" opener with a zero-width space so it stays ordinary text.
+std::string defuse_special_text(const std::string& in, const Tokenizer& tok) {
+    if (in.find("<|") == std::string::npos) return in;
+    std::string out;
+    out.reserve(in.size() + 16);
+    size_t i = 0;
+    while (i < in.size()) {
+        const size_t a = in.find("<|", i);
+        if (a == std::string::npos) { out.append(in, i, std::string::npos); break; }
+        out.append(in, i, a - i);
+        const size_t b = in.find("|>", a + 2);
+        if (b != std::string::npos && b - a <= 64 && tok.token_id(in.substr(a, b + 2 - a)) >= 0) out += "<\xE2\x80\x8B|";
+        else out += "<|";
+        i = a + 2;
+    }
+    return out;
+}
+jd::Value defuse_special_value(const jd::Value& v, const Tokenizer& tok) {
+    if (v.is_string()) return jd::Value(defuse_special_text(v.as_string(), tok));
+    if (v.is_array()) { jd::Value r = jd::Value::array(); for (auto& x : v.items()) r.push(defuse_special_value(x, tok)); return r; }
+    if (v.is_object()) { jd::Value r = jd::Value::object(); for (auto& m : v.members()) r.append(m.first, defuse_special_value(m.second, tok)); return r; }
+    return v;
+}
+}  // namespace
+
+namespace {
 
 const char* tname(const Value& v) {
     switch (v.type()) {
@@ -400,7 +427,9 @@ Task App::parse_task(const Value& body, Kind kind) {
             }
         }
         ChatInput ci;
-        ci.messages = *msgs;
+        // Inkling only (other templates keep llama.cpp's behaviour of parsing special-token text in content).
+        if (tok.token_id("<|content_thinking|>") >= 0) ci.messages = defuse_special_value(*msgs, tok);
+        else ci.messages = *msgs;
         if (has_tools) ci.tools = *tools;
         ci.tool_choice = tool_choice;
         ci.parallel_tool_calls = b.boolean("parallel_tool_calls", false);
@@ -1202,6 +1231,12 @@ done:
     if (o.verbosity >= 3 && !o.log_disable)
         std::fprintf(stderr, "[qv_server] slot %d task done: prompt=%d cached=%d gen=%d stop=%s%s prompt=%.0fms gen=%.0fms (%.2f tok/s)\n", sid, N, r.n_cache, r.n_decoded,
                      r.stop_type.c_str(), r.aborted ? " (client aborted)" : "", r.prompt_ms, r.predicted_ms, r.predicted_ms > 0 ? 1e3 * r.n_decoded / r.predicted_ms : 0.0);
+    if (const char* lg = std::getenv("QV_LOG_GEN")) {  // debug: dump the tail of the prompt and the head of the generation
+        const size_t nmax = (size_t)std::max(1, std::atoi(lg));
+        std::string out = r.content.substr(0, nmax);
+        for (char& c : out) if (c == '\n') c = '~';
+        std::fprintf(stderr, "[qv_server] GEN[%d tok]: %s\n", r.n_decoded, out.c_str());
+    }
     return r;
 }
 
